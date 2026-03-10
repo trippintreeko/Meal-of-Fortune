@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import {
   View,
   Text,
@@ -15,16 +15,18 @@ import { useThemeColors } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
 import { useCalendarStore } from '@/store/calendar-store'
 import type { VotingSession } from '@/types/social'
-import type { MealSlot } from '@/types/calendar'
+import type { MealSlot, SavedMeal } from '@/types/calendar'
 import ScheduleGroupMealModal from '@/components/social/voting/ScheduleGroupMealModal'
 import VotingResultsStats from '@/components/social/voting/VotingResultsStats'
 import type { SuggestionStat } from '@/components/social/voting/VotingResultsStats'
 import AddToCalendarModal from '@/components/calendar/AddToCalendarModal'
+import OrbitalSpinWheel from '@/components/OrbitalSpinWheel'
 
 type VotingStats = {
   total_participants: number
   total_votes: number
   winner_suggestion_id: string | null
+  tiebreaker_used?: boolean
   suggestions: SuggestionStat[]
 }
 
@@ -148,6 +150,33 @@ export default function ResultsScreen () {
     setAddToCalendarSuggestion(null)
   }
 
+  const tiebreakerData = useMemo(() => {
+    if (!stats?.winner_suggestion_id || !stats.suggestions?.length) return null
+    const maxVotes = Math.max(0, ...stats.suggestions.map((s) => s.vote_count))
+    const tied = stats.suggestions
+      .filter((s) => s.vote_count === maxVotes)
+      .sort((a, b) => a.suggestion_id.localeCompare(b.suggestion_id))
+    if (tied.length < 2 || maxVotes === 0) return null
+    const winnerIndex = tied.findIndex((s) => s.suggestion_id === stats.winner_suggestion_id)
+    if (winnerIndex < 0) return null
+    const tiedMeals: SavedMeal[] = tied.map((s) => ({
+      id: s.suggestion_id,
+      title: s.suggestion_text,
+      baseId: '',
+      proteinId: '',
+      vegetableId: '',
+      method: '',
+      createdAt: 0
+    }))
+    const n = tiedMeals.length
+    const floorPanels = 6
+    const multiplier = n > floorPanels ? 1 : Math.floor(floorPanels / n) + 1 // smallest k where n*k > floorPanels
+    const wheelMeals = Array.from({ length: multiplier }, () => tiedMeals).flat()
+    const wheelWinnerIndex = wheelMeals.findIndex((m) => m.id === tiedMeals[winnerIndex].id)
+    if (wheelWinnerIndex < 0) return null
+    return { tiedMeals, wheelMeals, winnerIndex, wheelWinnerIndex }
+  }, [stats?.winner_suggestion_id, stats?.suggestions])
+
   if (loading) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
@@ -163,6 +192,15 @@ export default function ResultsScreen () {
   const alreadyScheduled =
     session?.scheduled_meal_date != null && session?.scheduled_meal_slot != null
 
+  const groupChoseText = tiebreakerData
+    ? (() => {
+        const titles = tiebreakerData.tiedMeals.map((m) => m.title)
+        if (titles.length === 1) return titles[0]
+        if (titles.length === 2) return titles.join(' and ')
+        return titles.slice(0, -1).join(', ') + ', and ' + titles[titles.length - 1]
+      })()
+    : winnerText
+
   return (
     <ScrollView
       style={[styles.scroll, { backgroundColor: colors.background }]}
@@ -170,13 +208,32 @@ export default function ResultsScreen () {
       showsVerticalScrollIndicator={false}>
       <PartyPopper size={64} color={colors.primary} />
       <Text style={[styles.title, { color: colors.text }]}>Voting result</Text>
-      {winnerText ? (
+      {tiebreakerData && (
+        <Text style={[styles.tiebreakerSubtitle, { color: colors.textMuted }]}>
+          It was a tie! The wheel chose the winner.
+        </Text>
+      )}
+      {groupChoseText ? (
         <View style={[styles.winnerCard, { backgroundColor: colors.primary + '30', borderColor: colors.primary }]}>
           <Text style={[styles.winnerLabel, { color: colors.primary }]}>The group chose</Text>
-          <Text style={[styles.winnerText, { color: colors.text }]}>{winnerText}</Text>
+          <Text style={[styles.winnerText, { color: colors.text }]}>{groupChoseText}</Text>
         </View>
       ) : (
         <Text style={[styles.noWinner, { color: colors.textMuted }]}>No votes were cast.</Text>
+      )}
+
+      {tiebreakerData && (
+        <View style={styles.tiebreakerSection}>
+          <OrbitalSpinWheel
+            meals={tiebreakerData.wheelMeals}
+            onSpinComplete={() => {}}
+            themeColors={colors}
+            tiebreakerWinnerIndex={tiebreakerData.wheelWinnerIndex}
+          />
+          <Text style={[styles.tiebreakerLanded, { color: colors.text }]}>
+            The wheel landed on: {tiebreakerData.tiedMeals[tiebreakerData.winnerIndex].title}
+          </Text>
+        </View>
       )}
 
       {stats && (
@@ -287,6 +344,9 @@ const styles = StyleSheet.create({
   },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   title: { fontSize: 24, fontWeight: '700', color: '#1e293b', marginTop: 16, textAlign: 'center' },
+  tiebreakerSubtitle: { fontSize: 14, marginTop: 8, textAlign: 'center' },
+  tiebreakerSection: { marginTop: 24, alignItems: 'center', maxHeight: 220 },
+  tiebreakerLanded: { marginTop: 12, fontSize: 15, fontWeight: '600', textAlign: 'center' },
   winnerCard: {
     marginTop: 24,
     backgroundColor: '#dcfce7',

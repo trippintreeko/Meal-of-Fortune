@@ -138,16 +138,17 @@ export default function SessionScreen () {
       allowNewlines: false,
       disallowDangerous: true
     })
-    if (!result.sanitized) return
     if (!result.ok) {
       setError(result.error)
       return
     }
+    const text = result.sanitized
+    if (!text) return
     setSubmitting(true)
     setError(null)
     const { error: rpcErr } = await supabase.rpc('add_meal_suggestion', {
       p_session_id: sessionId,
-      p_suggestion_text: result.sanitized
+      p_suggestion_text: text
     })
     setSubmitting(false)
     if (!rpcErr) {

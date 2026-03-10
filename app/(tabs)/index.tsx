@@ -9,13 +9,15 @@ import {
   Alert,
   Animated,
   Easing,
-  PanResponder
+  PanResponder,
+  Linking
 } from 'react-native'
 import { useFocusEffect } from '@react-navigation/native'
 import { useRouter } from 'expo-router'
 import { setLastFocusedTabIndex, getLastFocusedTabIndex } from '@/lib/tab-transition'
+import SwipeTabsContainer from '@/components/navigation/SwipeTabsContainer'
 import {
-  Calendar as CalendarIcon,
+  MapPin,
   UtensilsCrossed as MealOfTheDayIcon,
   Gamepad2,
   Sparkles,
@@ -143,6 +145,12 @@ export default function HomeScreen () {
 
   const colors = useThemeColors()
   const { meal: mealOfTheDay, loading: mealOfTheDayLoading } = useMealOfTheDay()
+
+  const handleMealNearMe = useCallback((mealTitle?: string) => {
+    const query = mealTitle ? `${mealTitle.trim()} near me` : 'meal near me'
+    const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`
+    void Linking.openURL(url)
+  }, [])
 
   useEffect(() => {
     load()
@@ -373,27 +381,28 @@ export default function HomeScreen () {
   }, [savedMeals])
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={styles.main}>
+    <SwipeTabsContainer tabIndex={0}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={styles.main}>
         <View style={styles.banner}>
           <View style={styles.bannerHeader}>
-            <CalendarIcon size={24} color="#ffffff" />
-            <Text style={styles.bannerTitle}>Meal for today</Text>
+            <MapPin size={24} color="#ffffff" />
+            <Text style={styles.bannerTitle}>Meal near me</Text>
           </View>
           {!bannerMeal ? (
             <TouchableOpacity
               style={styles.bannerEvent}
-              onPress={() => router.push('/(tabs)/calendar')}
+              onPress={() => handleMealNearMe()}
               activeOpacity={0.8}
             >
-              <Text style={styles.bannerEventLabel}>Nothing planned</Text>
+              <Text style={styles.bannerEventLabel}>Search restaurants nearby</Text>
               <ChevronRight size={20} color="rgba(255,255,255,0.8)" />
             </TouchableOpacity>
           ) : (
             <>
               <TouchableOpacity
                 style={styles.bannerEvent}
-                onPress={() => router.push('/(tabs)/calendar')}
+                onPress={() => handleMealNearMe(bannerMeal.title)}
                 activeOpacity={0.8}
               >
                 <Text style={styles.bannerEventSlot}>
@@ -411,7 +420,7 @@ export default function HomeScreen () {
                 <View style={styles.carouselWrap} {...carouselPan.panHandlers}>
                   <TouchableOpacity
                     style={styles.carouselCard}
-                    onPress={() => router.push('/(tabs)/calendar')}
+                    onPress={() => handleMealNearMe(upcomingAfterBanner[carouselIndex].title)}
                     activeOpacity={0.9}
                   >
                     <Text style={styles.carouselCardDay}>
@@ -711,7 +720,8 @@ export default function HomeScreen () {
         })}
       </View>
       )}
-    </View>
+      </View>
+    </SwipeTabsContainer>
   )
 }
 

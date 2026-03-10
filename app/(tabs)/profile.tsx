@@ -21,6 +21,7 @@ import { useThemeColors, useTheme } from '@/hooks/useTheme'
 import { useSocialAuth } from '@/hooks/useSocialAuth'
 import { useTabHeaderSlide } from '@/hooks/useTabHeaderSlide'
 import { getLastFocusedTabIndex } from '@/lib/tab-transition'
+import SwipeTabsContainer from '@/components/navigation/SwipeTabsContainer'
 
 const PROFILE_TAB_INDEX = 3
 const STAGGER_OFFSET = 80
@@ -120,18 +121,19 @@ export default function ProfileScreen () {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-        <Animated.View style={[styles.headerContent, headerSlideStyle]}>
-          <User size={32} color={colors.primary} />
-          <Text style={[styles.title, { color: colors.text }]}>Profile</Text>
-          <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-            Manage your preferences and settings
-          </Text>
-        </Animated.View>
-      </View>
-      <ScrollView contentContainerStyle={styles.content}>
-        <Animated.View style={[styles.section, profileSlideStyle(slide1)]}>
+    <SwipeTabsContainer tabIndex={PROFILE_TAB_INDEX}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+          <Animated.View style={[styles.headerContent, headerSlideStyle]}>
+            <User size={32} color={colors.primary} />
+            <Text style={[styles.title, { color: colors.text }]}>Profile</Text>
+            <Text style={[styles.subtitle, { color: colors.textMuted }]}>
+              Manage your preferences and settings
+            </Text>
+          </Animated.View>
+        </View>
+        <ScrollView contentContainerStyle={styles.content}>
+          <Animated.View style={[styles.section, profileSlideStyle(slide1)]}>
           <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Account</Text>
           {authLoading ? (
             <View style={[styles.accountCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
@@ -293,8 +295,9 @@ export default function ProfileScreen () {
           </View>
           </Animated.View>
         </View>
-      </ScrollView>
-    </View>
+        </ScrollView>
+      </View>
+    </SwipeTabsContainer>
   )
 }
 

@@ -31,6 +31,7 @@ type ScheduleMealModalProps = {
     mealDate: string,
     mealSlot: MealSlot
   ) => Promise<{
+    winner_suggestion_id: string
     suggestion_text: string
     vote_count: number
     total_voters: number

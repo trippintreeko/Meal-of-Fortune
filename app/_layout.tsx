@@ -16,6 +16,7 @@ function RootStack () {
     <View style={{ flex: 1, paddingTop: insets.top, backgroundColor: '#000000' }}>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="privacy" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="game/feeling" />
         <Stack.Screen name="game/spin" />
@@ -24,6 +25,7 @@ function RootStack () {
         <Stack.Screen name="game/results" />
         <Stack.Screen name="preferences" />
         <Stack.Screen name="food-gallery" />
+        <Stack.Screen name="recipe/[id]" />
         <Stack.Screen name="social" />
         <Stack.Screen name="profile" />
         <Stack.Screen name="+not-found" />

@@ -111,6 +111,7 @@ export default function StartVoteModal ({
             onChange={setDeadlineDate}
             minYear={now.getFullYear()}
             maxYear={now.getFullYear() + 1}
+            textColor={c.primary}
           />
 
           <Text style={[styles.label, { color: c.textMuted }]}>Time (any time)</Text>

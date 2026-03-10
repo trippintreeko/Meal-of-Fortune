@@ -17,6 +17,7 @@ export default function ForgotPasswordScreen () {
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [confirmStep, setConfirmStep] = useState(false)
   const [sent, setSent] = useState(false)
 
   const errorDisplay = useMemo(() => {
@@ -27,17 +28,23 @@ export default function ForgotPasswordScreen () {
     return error
   }, [error])
 
-  const handleSubmit = async () => {
+  const handleContinue = () => {
     const trimmed = sanitizeText(email, { allowNewlines: false }).trim()
     if (!trimmed) {
       setError('Enter your email address.')
       return
     }
     setError(null)
+    setConfirmStep(true)
+  }
+
+  const handleConfirmSend = async () => {
+    const trimmed = sanitizeText(email, { allowNewlines: false }).trim()
+    if (!trimmed) return
+    setError(null)
     setLoading(true)
-    // Dev: use localhost so the reset link opens in the browser (add http://localhost:8081/social/auth-callback to Supabase Redirect URLs)
-    // Prod: EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL for web page, else app deep link
-    const webRedirect = (process.env.EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL as string | undefined)?.trim()
+    const webRedirect = (process.env.EXPO_PUBLIC_EMAIL_CONFIRM_REDIRECT_URL as string | undefined)?.trim() ||
+      (process.env.EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL as string | undefined)?.trim()
     const devRedirect = __DEV__ ? 'http://localhost:8081/social/auth-callback' : null
     const redirectTo = webRedirect || devRedirect || Linking.createURL('social/auth-callback')
     const { error: e } = await supabase.auth.resetPasswordForEmail(trimmed, { redirectTo })
@@ -71,6 +78,38 @@ export default function ForgotPasswordScreen () {
     )
   }
 
+  if (confirmStep) {
+    const trimmed = sanitizeText(email, { allowNewlines: false }).trim()
+    return (
+      <KeyboardAvoidingView
+        style={[styles.container, { backgroundColor: colors.background }]}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View style={[styles.form, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
+          <Text style={[styles.successTitle, { color: colors.text }]}>Confirm password reset</Text>
+          <Text style={[styles.successBody, { color: colors.textMuted }]}>
+            We'll send a password reset link to {trimmed}. Do you want to continue?
+          </Text>
+          {errorDisplay ? <Text style={[styles.error, { color: colors.destructive }]}>{errorDisplay}</Text> : null}
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: colors.primary }, loading && styles.buttonDisabled]}
+            onPress={handleConfirmSend}
+            disabled={loading}
+          >
+            {loading ? <ActivityIndicator color={colors.primaryText} /> : <Text style={styles.buttonText}>Yes, send the email</Text>}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.link}
+            onPress={() => { setConfirmStep(false); setError(null) }}
+            disabled={loading}
+          >
+            <Text style={[styles.linkText, { color: colors.primary }]}>Back to edit email</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    )
+  }
+
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.background }]}
@@ -91,11 +130,10 @@ export default function ForgotPasswordScreen () {
         />
         {errorDisplay ? <Text style={[styles.error, { color: colors.destructive }]}>{errorDisplay}</Text> : null}
         <TouchableOpacity
-          style={[styles.button, { backgroundColor: colors.primary }, loading && styles.buttonDisabled]}
-          onPress={handleSubmit}
-          disabled={loading}
+          style={[styles.button, { backgroundColor: colors.primary }]}
+          onPress={handleContinue}
         >
-          {loading ? <ActivityIndicator color={colors.primaryText} /> : <Text style={styles.buttonText}>Send reset link</Text>}
+          <Text style={styles.buttonText}>Continue</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.link} onPress={() => router.back()}>
           <Text style={[styles.linkText, { color: colors.primary }]}>Back to Sign in</Text>

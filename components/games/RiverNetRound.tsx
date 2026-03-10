@@ -18,14 +18,14 @@ import { getFoodAsset, filterSpawnableFoodItems } from '@/lib/food-asset-mapping
 import { getFoodAssetSource } from '@/lib/food-asset-registry'
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window')
-const COLS = 3
+const COLS = 5
 const COL_WIDTH = SCREEN_WIDTH / COLS
 const CATCH_ZONE_TOP = SCREEN_HEIGHT - 140
 const CATCH_ZONE_BOTTOM = SCREEN_HEIGHT - 80
 const FOOD_RADIUS = Math.round(22 * 4.5) // 450% bigger images
 const NET_RADIUS = 36
-const BASE_SPEED = 5
-const MAX_SPEED = 9.5
+const BASE_SPEED = 3.2
+const MAX_SPEED = 5
 const GAME_DURATION_SEC = 30
 const SPAWN_INTERVAL_MS_MAX = 900
 const SPAWN_INTERVAL_MS_MIN = 200
@@ -54,7 +54,7 @@ export default function RiverNetRound ({
 }: RoundGameProps) {
   const [foodPool, setFoodPool] = useState<{ id: string; name: string; category?: string }[]>([])
   const [foods, setFoods] = useState<FloatingFood[]>([])
-  const [netColumn, setNetColumn] = useState(1)
+  const [netColumn, setNetColumn] = useState(2)
   const [caughtIds, setCaughtIds] = useState<string[]>([])
   const [timeLeft, setTimeLeft] = useState(GAME_DURATION_SEC)
   const [gameOver, setGameOver] = useState(false)
@@ -62,9 +62,9 @@ export default function RiverNetRound ({
   const [gameStarted, setGameStarted] = useState(false)
 
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const spawnRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const startTimeRef = useRef<number>(Date.now())
+  const lastTickTimeRef = useRef<number>(Date.now())
+  const nextSpawnAtRef = useRef<number>(Date.now())
   const nextIdRef = useRef(0)
   const netColumnRef = useRef(netColumn)
   const caughtIdsRef = useRef<string[]>(caughtIds)
@@ -78,11 +78,7 @@ export default function RiverNetRound ({
 
   const finishGame = useCallback(() => {
     if (tickRef.current) clearInterval(tickRef.current)
-    if (spawnRef.current) clearInterval(spawnRef.current)
-    if (timerRef.current) clearInterval(timerRef.current)
     tickRef.current = null
-    spawnRef.current = null
-    timerRef.current = null
     setGameOver(true)
     const finalCaught = caughtIdsRef.current
     const pool = foodPoolRef.current
@@ -178,39 +174,34 @@ export default function RiverNetRound ({
   useEffect(() => {
     if (!ready || !gameStarted || gameOver || foodPool.length === 0) return
 
-    startTimeRef.current = Date.now()
+    const startTime = Date.now()
+    startTimeRef.current = startTime
+    lastTickTimeRef.current = startTime
+    nextSpawnAtRef.current = startTime
 
-    timerRef.current = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          finishGame()
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
-
-    const progress = () =>
-      Math.min(1, (Date.now() - startTimeRef.current) / (GAME_DURATION_SEC * 1000))
     const speedAtProgress = (p: number) => BASE_SPEED + p * (MAX_SPEED - BASE_SPEED)
 
-    const spawnNext = () => {
-      if (foodPool.length === 0) return
+    const trySpawn = (now: number) => {
+      if (foodPoolRef.current.length === 0) return
+      const elapsed = (now - startTimeRef.current) / 1000
+      const p = Math.min(1, elapsed / GAME_DURATION_SEC)
+      const intervalMs =
+        SPAWN_INTERVAL_MS_MAX - p * (SPAWN_INTERVAL_MS_MAX - SPAWN_INTERVAL_MS_MIN)
+      if (now < nextSpawnAtRef.current) return
+      nextSpawnAtRef.current = now + intervalMs
+
       const spawnY = -FOOD_RADIUS * 2
       const current = foodsRef.current
-      const availableColumns = [0, 1, 2].filter((c) => {
+      const availableColumns = Array.from({ length: COLS }, (_, c) => c).filter((c) => {
         const hasOverlap = current.some(
           (f) => f.column === c && Math.abs(f.y - spawnY) < MIN_VERTICAL_GAP
         )
         return !hasOverlap
       })
-      const p = progress()
       const speed = speedAtProgress(p)
-      const intervalMs =
-        SPAWN_INTERVAL_MS_MAX - p * (SPAWN_INTERVAL_MS_MAX - SPAWN_INTERVAL_MS_MIN)
-
       const spawnTwo = availableColumns.length >= 2 && Math.random() < DOUBLE_SPAWN_CHANCE
       const newFoods: FloatingFood[] = []
+      const pool = foodPoolRef.current
 
       if (spawnTwo) {
         const colA = availableColumns[Math.floor(Math.random() * availableColumns.length)]
@@ -218,8 +209,8 @@ export default function RiverNetRound ({
         while (colB === colA && availableColumns.length > 1) {
           colB = availableColumns[Math.floor(Math.random() * availableColumns.length)]
         }
-        const itemA = foodPool[Math.floor(Math.random() * foodPool.length)]
-        const itemB = foodPool[Math.floor(Math.random() * foodPool.length)]
+        const itemA = pool[Math.floor(Math.random() * pool.length)]
+        const itemB = pool[Math.floor(Math.random() * pool.length)]
         newFoods.push(
           {
             id: `f-${nextIdRef.current++}`,
@@ -245,7 +236,7 @@ export default function RiverNetRound ({
           availableColumns.length > 0
             ? availableColumns[Math.floor(Math.random() * availableColumns.length)]
             : Math.floor(Math.random() * COLS)
-        const item = foodPool[Math.floor(Math.random() * foodPool.length)]
+        const item = pool[Math.floor(Math.random() * pool.length)]
         newFoods.push({
           id: `f-${nextIdRef.current++}`,
           foodId: item.id,
@@ -256,23 +247,30 @@ export default function RiverNetRound ({
           category: item.category
         })
       }
-
       setFoods((prev) => [...prev, ...newFoods])
-      if (spawnRef.current) clearInterval(spawnRef.current)
-      spawnRef.current = setTimeout(spawnNext, intervalMs) as unknown as ReturnType<typeof setInterval>
     }
-    spawnNext()
 
     tickRef.current = setInterval(() => {
-      const elapsed = (Date.now() - startTimeRef.current) / 1000
-      const p = Math.min(1, elapsed / GAME_DURATION_SEC)
-      const currentSpeed = speedAtProgress(p)
+      const now = Date.now()
+      const elapsed = (now - startTimeRef.current) / 1000
+
+      if (elapsed >= GAME_DURATION_SEC) {
+        finishGame()
+        return
+      }
+
+      setTimeLeft(Math.max(0, GAME_DURATION_SEC - Math.floor(elapsed)))
+
+      const dt = Math.min((now - lastTickTimeRef.current) / 1000, 0.2)
+      lastTickTimeRef.current = now
+
+      trySpawn(now)
 
       setFoods((prev) => {
         const next: FloatingFood[] = []
         const toCatch: string[] = []
         for (const f of prev) {
-          const newY = f.y + f.speed * (TICK_MS / 1000) * 60
+          const newY = f.y + f.speed * dt * 60
           if (newY > SCREEN_HEIGHT + FOOD_RADIUS) continue
           const inCatchZone =
             newY + FOOD_RADIUS >= CATCH_ZONE_TOP &&
@@ -294,10 +292,8 @@ export default function RiverNetRound ({
 
     return () => {
       if (tickRef.current) clearInterval(tickRef.current)
-      if (spawnRef.current) clearInterval(spawnRef.current)
-      if (timerRef.current) clearInterval(timerRef.current)
     }
-  }, [ready, gameStarted, gameOver, foodPool.length, netColumn, finishGame])
+  }, [ready, gameStarted, gameOver, foodPool.length, finishGame])
 
   useEffect(() => {
     if (timeLeft === 0 && gameStarted && !gameOver && ready) {
@@ -309,8 +305,8 @@ export default function RiverNetRound ({
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onPanResponderMove: (_, gesture) => {
-        const col = gesture.moveX < COL_WIDTH ? 0 : gesture.moveX < COL_WIDTH * 2 ? 1 : 2
-        setNetColumn(Math.max(0, Math.min(2, col)))
+        const col = Math.max(0, Math.min(COLS - 1, Math.floor(gesture.moveX / COL_WIDTH)))
+        setNetColumn(col)
       }
     })
   ).current
@@ -336,10 +332,10 @@ export default function RiverNetRound ({
           <View style={styles.introCard}>
             <Text style={styles.introTitle}>River Net</Text>
             <Text style={styles.introText}>
-              Food floats down the river in three columns. Swipe left or right to move your net into a column.
+              Food floats down the river in five columns. Swipe left or right to move your net into a column.
             </Text>
             <Text style={styles.introText}>
-              Catch the food circles you want as they pass the bridge. You have 60 seconds—food speeds up as time runs down!
+              Catch the food circles you want as they pass the bridge. You have 30 seconds—food speeds up as time runs down!
             </Text>
             <TouchableOpacity
               style={styles.introButton}
@@ -353,8 +349,8 @@ export default function RiverNetRound ({
       </Modal>
       <View style={styles.river} {...panResponder.panHandlers}>
         <View style={styles.columns}>
-          {[0, 1, 2].map((c) => (
-            <View key={c} style={[styles.column, c < 2 && styles.columnBorder]} />
+          {Array.from({ length: COLS }, (_, c) => c).map((c) => (
+            <View key={c} style={[styles.column, c < COLS - 1 && styles.columnBorder]} />
           ))}
         </View>
 

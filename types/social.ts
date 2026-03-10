@@ -93,6 +93,7 @@ export type VotingSession = {
   created_at: string
   winner_suggestion_id: string | null
   decided_at: string | null
+  tiebreaker_used?: boolean
   description?: string | null
   scheduled_meal_date?: string | null
   scheduled_meal_slot?: string | null

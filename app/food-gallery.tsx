@@ -100,13 +100,15 @@ function MealCard ({
   viewMode,
   noMarginRight,
   onPress,
-  onWantThis
+  onToggleWant,
+  isAdded
 }: {
   meal: ExplorerMeal
   viewMode: ViewMode
   noMarginRight?: boolean
   onPress: () => void
-  onWantThis: () => void
+  onToggleWant: () => void
+  isAdded: boolean
 }) {
   const isList = viewMode === 'list'
   const isBig = viewMode === 'big'
@@ -155,11 +157,11 @@ function MealCard ({
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           onPress={(e) => {
             e.stopPropagation()
-            onWantThis()
+            onToggleWant()
           }}
           style={styles.heartWrap}
         >
-          <Heart size={isSmall ? 18 : 22} color="#ffffff" fill="transparent" />
+          <Heart size={isSmall ? 18 : 22} color="#ffffff" fill={isAdded ? '#ffffff' : 'transparent'} />
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
@@ -414,8 +416,34 @@ export default function FoodGalleryScreen () {
   const feelingLabel = feelingId ? getFeelingById(feelingId)?.label : null
   const foodLabel = foodName ? `Meals with ${foodName}` : (foodId ? 'Meals with your pick' : null)
   const addSavedMeal = useCalendarStore(s => s.addSavedMeal)
+  const savedMeals = useCalendarStore(s => s.savedMeals)
+  const removeSavedMeal = useCalendarStore(s => s.removeSavedMeal)
 
-  const handleWantThis = async (meal: ExplorerMeal) => {
+  const getSavedMealIdForExplorerMeal = useMemo(() => {
+    return (meal: ExplorerMeal): string | null => {
+      const match = savedMeals.find((m) => {
+        const sameTitle = (m.title ?? '').trim().toLowerCase() === (meal.title ?? '').trim().toLowerCase()
+        if (!sameTitle) return false
+        const sameBase = (m.baseId ?? '') === (meal.base ?? '')
+        const sameProtein = (m.proteinId ?? '') === (meal.protein ?? '')
+        const sameVegetable = (m.vegetableId ?? '') === (meal.vegetable ?? '')
+        const sameMethod = (m.method ?? '') === (meal.method ?? '')
+        return sameBase && sameProtein && sameVegetable && sameMethod
+      })
+      return match?.id ?? null
+    }
+  }, [savedMeals])
+
+  const toggleWantThis = async (meal: ExplorerMeal) => {
+    const existingId = getSavedMealIdForExplorerMeal(meal)
+    if (existingId) {
+      await removeSavedMeal(existingId)
+      return
+    }
+    await handleWantThis(meal, { shouldClose: false })
+  }
+
+  const handleWantThis = async (meal: ExplorerMeal, options?: { shouldClose?: boolean }) => {
     const hasIds = !!(meal.base && meal.protein && meal.vegetable)
     if (hasIds) {
       await addSavedMeal({
@@ -434,10 +462,20 @@ export default function FoodGalleryScreen () {
         method: 'grilled'
       })
     }
-    setSelectedMeal(null)
+    if (options?.shouldClose !== false) setSelectedMeal(null)
   }
 
   const numColumns = viewMode === 'list' ? 1 : viewMode === 'big' ? 2 : 3
+  const isSelectedMealAdded = useMemo(() => {
+    if (!selectedMeal) return false
+    const meal = selectedMeal
+    return getSavedMealIdForExplorerMeal(meal) != null
+  }, [selectedMeal, getSavedMealIdForExplorerMeal])
+
+  const selectedSavedMealId = useMemo(() => {
+    if (!selectedMeal) return null
+    return getSavedMealIdForExplorerMeal(selectedMeal)
+  }, [selectedMeal, getSavedMealIdForExplorerMeal])
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -656,7 +694,8 @@ export default function FoodGalleryScreen () {
                 viewMode={viewMode}
                 noMarginRight={numColumns > 1 && (index % numColumns) === numColumns - 1}
                 onPress={() => { closeDropdownsAndSearch(); setSelectedMeal(item) }}
-                onWantThis={() => handleWantThis(item)}
+                onToggleWant={() => void toggleWantThis(item)}
+                isAdded={getSavedMealIdForExplorerMeal(item) != null}
               />
             )}
           />
@@ -703,11 +742,29 @@ export default function FoodGalleryScreen () {
                     : null}
                 </ScrollView>
                 <TouchableOpacity
-                  style={[styles.modalWantBtn, { backgroundColor: colors.primary }]}
-                  onPress={() => handleWantThis(selectedMeal)}
+                  style={[
+                    styles.modalWantBtn,
+                    { backgroundColor: colors.primary }
+                  ]}
+                  onPress={async () => {
+                    if (isSelectedMealAdded && selectedSavedMealId) {
+                      await removeSavedMeal(selectedSavedMealId)
+                      return
+                    }
+                    await handleWantThis(selectedMeal, { shouldClose: false })
+                  }}
                 >
-                  <Heart size={22} color="#ffffff" />
-                  <Text style={styles.modalWantText}>I want this — see results</Text>
+                  <Heart size={22} color="#ffffff" fill={isSelectedMealAdded ? '#ffffff' : 'transparent'} />
+                  <Text style={styles.modalWantText}>{isSelectedMealAdded ? 'Added' : 'Add this to the list'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalRecipeBtn, { backgroundColor: colors.secondaryBg, borderColor: colors.cardBorder }]}
+                  onPress={() => {
+                    setSelectedMeal(null)
+                    router.push({ pathname: '/recipe/[id]', params: { id: selectedMeal.id } })
+                  }}
+                >
+                  <Text style={[styles.modalRecipeText, { color: colors.text }]}>Recipe</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -992,7 +1049,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     backgroundColor: '#22c55e',
-    margin: PAD,
+    marginHorizontal: PAD,
+    marginTop: PAD,
     padding: 16,
     borderRadius: 12
   },
@@ -1000,5 +1058,19 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     color: '#ffffff'
+  },
+  modalRecipeBtn: {
+    marginHorizontal: PAD,
+    marginTop: 10,
+    marginBottom: PAD,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  modalRecipeText: {
+    fontSize: 16,
+    fontWeight: '700'
   }
 })

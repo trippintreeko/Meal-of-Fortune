@@ -1,0 +1,108 @@
+<!--
+  Paste this into Google Sites: Embed → Embed code.
+  Edit APP_REDIRECT_URL below to your app URL (deep link or Expo web).
+  Use this ONE page for: email confirmation, magic link, password reset.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Redirecting – Meal of Fortune</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          sans-serif;
+        background: #f3f4f6;
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        text-align: center;
+      }
+      .card {
+        background: #fff;
+        border-radius: 12px;
+        padding: 32px;
+        max-width: 380px;
+        width: 100%;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0 0 8px;
+        color: #111827;
+      }
+      p {
+        font-size: 14px;
+        color: #6b7280;
+        margin: 0 0 20px;
+      }
+      .spinner {
+        display: inline-block;
+        width: 24px;
+        height: 24px;
+        border: 2px solid #e5e7eb;
+        border-top-color: #2563eb;
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+        margin-bottom: 16px;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      a {
+        color: #2563eb;
+        font-weight: 600;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="spinner" aria-hidden="true"></div>
+      <h1>Redirecting to Meal of Fortune…</h1>
+      <p>
+        Meal of Fortune will open shortly. If nothing happens,
+        <a href="#" id="open-app">open the app manually</a>.
+      </p>
+    </div>
+
+    <script>
+      (function () {
+        // Set this to your app URL (deep link or Expo web). No trailing slash.
+        var APP_REDIRECT_URL = 'myapp://social/auth-callback';
+
+        // Prefer hash from top window (when this is embedded on Google Sites, Supabase puts tokens in the page URL hash)
+        var hash = '';
+        try {
+          if (window.top && window.top.location && window.top.location.hash) {
+            hash = window.top.location.hash;
+          } else if (window.location.hash) {
+            hash = window.location.hash;
+          }
+        } catch (e) {
+          if (window.location.hash) hash = window.location.hash;
+        }
+
+        var target = APP_REDIRECT_URL + hash;
+
+        document.getElementById('open-app').href = target;
+
+        window.top.location.href = target;
+      })();
+    </script>
+  </body>
+</html>

@@ -20,6 +20,7 @@ import { useThemeColors } from '@/hooks/useTheme'
 import { useMealOfTheDay } from '@/hooks/useMealOfTheDay'
 import { useGameSessionStore } from '@/store/game-session'
 import { useCalendarStore } from '@/store/calendar-store'
+import SwipeTabsContainer from '@/components/navigation/SwipeTabsContainer'
 import MealDetailModal from '@/components/MealDetailModal'
 import { dateKey } from '@/types/calendar'
 import { scheduleMealReminder, cancelScheduledNotification } from '@/lib/notifications'
@@ -358,14 +359,15 @@ export default function CalendarScreen () {
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-        <Animated.View style={[styles.headerContent, headerSlideStyle]}>
-          <CalendarIcon size={32} color={colors.primary} />
-          <Text style={[styles.title, { color: colors.text }]}>Meal Calendar</Text>
-          <Text style={[styles.subtitle, { color: colors.textMuted }]}>Your upcoming meal schedule</Text>
-        </Animated.View>
-      </View>
+    <SwipeTabsContainer tabIndex={CALENDAR_TAB_INDEX}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+          <Animated.View style={[styles.headerContent, headerSlideStyle]}>
+            <CalendarIcon size={32} color={colors.primary} />
+            <Text style={[styles.title, { color: colors.text }]}>Meal Calendar</Text>
+            <Text style={[styles.subtitle, { color: colors.textMuted }]}>Your upcoming meal schedule</Text>
+          </Animated.View>
+        </View>
 
       <View style={[styles.calendarControls, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={previousMonth} style={styles.navButton}>
@@ -639,7 +641,7 @@ export default function CalendarScreen () {
         />
       )}
 
-      <MealDetailModal
+        <MealDetailModal
         visible={showMealOfTheDayModal && !!mealOfTheDayAsSaved}
         meal={mealOfTheDayAsSaved}
         onClose={() => setShowMealOfTheDayModal(false)}
@@ -657,7 +659,8 @@ export default function CalendarScreen () {
         variant="mealOfTheDay"
         onFavorite={handleMealOfTheDayFavorite}
       />
-    </View>
+      </View>
+    </SwipeTabsContainer>
   )
 }
 

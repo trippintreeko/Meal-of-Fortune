@@ -16,6 +16,14 @@ const ORBIT_TRACK_HEIGHT = 260
 const ORBIT_RADIUS = 100
 const PANEL_WIDTH = 140
 const PANEL_HEIGHT = 56
+/** Compact dimensions for tiebreaker on results page */
+const COMPACT_TRACK_WIDTH = 100
+const COMPACT_TRACK_HEIGHT = 120
+const COMPACT_RADIUS = 44
+const COMPACT_PANEL_WIDTH = 88
+const COMPACT_PANEL_HEIGHT = 36
+/** Vertical offset so winning panel aligns with stopper triangle tips in compact mode */
+const COMPACT_CENTER_OFFSET_Y = 0
 const ORBIT_SAMPLES = 36
 const DRAG_SCALE = 200
 const SWIPE_DURATION_MS = 280
@@ -73,8 +81,8 @@ function phaseToCenterWinner (winnerIndex: number, n: number): number {
   return wrap(0.25 - winnerIndex / n)
 }
 
-/** YZ plane: Y = vertical (cos), Z = depth (sin) for scale and ordering. */
-function orbitRanges (index: number, n: number, radius: number) {
+/** YZ plane: Y = vertical (cos), Z = depth (sin). flipY inverts vertical. flatScale keeps all panels same size (no grow/shrink). */
+function orbitRanges (index: number, n: number, radius: number, flipY: boolean = false, flatScale: boolean = false) {
   const inputRange: number[] = []
   const outTranslateY: number[] = []
   const outScale: number[] = []
@@ -84,9 +92,13 @@ function orbitRanges (index: number, n: number, radius: number) {
     const angle = 2 * Math.PI * (index / n + t)
     const y = radius * Math.cos(angle)
     const z = radius * Math.sin(angle)
-    outTranslateY.push(y)
-    const normalizedZ = (z / radius + 1) / 2
-    outScale.push(0.22 + 0.78 * normalizedZ)
+    outTranslateY.push(flipY ? -y : y)
+    if (flatScale) {
+      outScale.push(1)
+    } else {
+      const normalizedZ = (z / radius + 1) / 2
+      outScale.push(0.22 + 0.78 * normalizedZ)
+    }
   }
   return { inputRange, outTranslateY, outScale }
 }
@@ -108,6 +120,8 @@ type OrbitalSpinWheelProps = {
   themeColors?: ThemeColors
   onInteractionStart?: () => void
   onInteractionEnd?: () => void
+  /** When set, wheel runs one automatic spin on mount that lands on this index (tiebreaker mode). No swipe/button. */
+  tiebreakerWinnerIndex?: number | null
 }
 
 const FRICTION_FACTOR = 0.5
@@ -117,37 +131,54 @@ function OrbitingMealItem ({
   meal,
   index,
   n,
-  orbit,
-  theme
+  orbitPhase,
+  theme,
+  radius,
+  panelWidth,
+  panelHeight,
+  trackWidth,
+  trackHeight,
+  flipY,
+  flatScale = false
 }: {
   meal: SavedMeal
   index: number
   n: number
-  orbit: Animated.Value
+  orbitPhase: any
   theme: ThemeColors | undefined
+  radius: number
+  panelWidth: number
+  panelHeight: number
+  trackWidth: number
+  trackHeight: number
+  flipY: boolean
+  flatScale?: boolean
 }) {
   const { inputRange, outTranslateY, outScale } = useMemo(
-    () => orbitRanges(index, n, ORBIT_RADIUS),
-    [index, n]
+    () => orbitRanges(index, n, radius, flipY, flatScale),
+    [index, n, radius, flipY, flatScale]
   )
-  const translateY = orbit.interpolate({ inputRange, outputRange: outTranslateY })
-  const scale = orbit.interpolate({ inputRange, outputRange: outScale })
+  const translateY = orbitPhase.interpolate({ inputRange, outputRange: outTranslateY })
+  const scale = orbitPhase.interpolate({ inputRange, outputRange: outScale })
   const bg = theme?.card ?? '#ffffff'
   const border = theme?.cardBorder ?? '#e2e8f0'
   const textColor = theme?.text ?? '#1e293b'
 
+  const centerOffsetY = flatScale ? COMPACT_CENTER_OFFSET_Y : 0
   return (
     <Animated.View
       style={[
-        styles.orbitItem,
+        styles.orbitItemBase,
         {
-          width: PANEL_WIDTH,
-          height: PANEL_HEIGHT,
+          width: panelWidth,
+          height: panelHeight,
+          left: trackWidth / 2 - panelWidth / 2,
+          top: trackHeight / 2 - panelHeight / 2 + centerOffsetY,
           transform: [{ translateY }, { scale }]
         }
       ]}
     >
-      <View style={[styles.titlePanel, { backgroundColor: bg, borderColor: border }]}>
+      <View style={[styles.titlePanel, { backgroundColor: bg, borderColor: border, minHeight: panelHeight }]}>
         <Text
           style={[styles.titlePanelText, { color: textColor }]}
           numberOfLines={2}
@@ -160,6 +191,8 @@ function OrbitingMealItem ({
   )
 }
 
+const TIEBREAKER_DELAY_MS = 500
+
 export default function OrbitalSpinWheel ({
   meals,
   onSpinComplete,
@@ -167,10 +200,12 @@ export default function OrbitalSpinWheel ({
   onSwipeStats,
   themeColors,
   onInteractionStart,
-  onInteractionEnd
+  onInteractionEnd,
+  tiebreakerWinnerIndex = null
 }: OrbitalSpinWheelProps) {
   const n = meals.length
   const orbit = useRef(new Animated.Value(0)).current
+  const orbitPhase = useMemo(() => Animated.modulo(orbit, 1), [orbit])
   const orbitRef = useRef(0)
   const lastDyRef = useRef(0)
   const animRef = useRef<Animated.CompositeAnimation | null>(null)
@@ -180,6 +215,7 @@ export default function OrbitalSpinWheel ({
   const onStartRef = useRef(onInteractionStart)
   const onEndRef = useRef(onInteractionEnd)
   const lastFrontRef = useRef<number>(-1)
+  const tiebreakerRanRef = useRef(false)
   onCompleteRef.current = onSpinComplete
   onFrontRef.current = onFrontIndexChange
   onSwipeStatsRef.current = onSwipeStats
@@ -187,6 +223,34 @@ export default function OrbitalSpinWheel ({
   onEndRef.current = onInteractionEnd
 
   const [renderOrder, setRenderOrder] = useState<number[]>(() => orderByDepth(0, n))
+  const isTiebreaker = tiebreakerWinnerIndex != null && tiebreakerWinnerIndex >= 0 && tiebreakerWinnerIndex < n
+
+  useEffect(() => {
+    if (!isTiebreaker || n === 0 || tiebreakerRanRef.current) return
+    tiebreakerRanRef.current = true
+    onStartRef.current?.()
+    const timer = setTimeout(() => {
+      animRef.current?.stop()
+      const centerPhase = phaseToCenterWinner(tiebreakerWinnerIndex!, n)
+      const target = SPIN_BUTTON_REVOLUTIONS + centerPhase
+      orbitRef.current = wrap(target)
+      const finalPhase = wrap(target)
+      animRef.current = Animated.timing(orbit, {
+        toValue: target,
+        duration: SPIN_BUTTON_DURATION_MS,
+        useNativeDriver: false,
+        easing: Easing.out(Easing.cubic)
+      })
+      animRef.current.start(() => {
+        orbit.setValue(finalPhase)
+        orbitRef.current = finalPhase
+        animRef.current = null
+        onCompleteRef.current(tiebreakerWinnerIndex!)
+        onEndRef.current?.()
+      })
+    }, TIEBREAKER_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [isTiebreaker, tiebreakerWinnerIndex, n, orbit])
 
   useEffect(() => {
     if (n === 0) return
@@ -322,36 +386,69 @@ export default function OrbitalSpinWheel ({
   const muted = themeColors?.textMuted ?? '#64748b'
   const primary = themeColors?.primary ?? '#22c55e'
 
+  const compact = isTiebreaker
+  const trackWidth = compact ? COMPACT_TRACK_WIDTH : ORBIT_TRACK_WIDTH
+  const trackHeight = compact ? COMPACT_TRACK_HEIGHT : ORBIT_TRACK_HEIGHT
+  const radius = compact ? COMPACT_RADIUS : ORBIT_RADIUS
+  const panelWidth = compact ? COMPACT_PANEL_WIDTH : PANEL_WIDTH
+  const panelHeight = compact ? COMPACT_PANEL_HEIGHT : PANEL_HEIGHT
+  const flipY = compact
+
   return (
     <View style={styles.wrapper}>
       <Text style={[styles.hint, { color: muted }]}>
-        Swipe up/down to rotate, or tap Spin to pick a meal
+        {isTiebreaker ? 'Breaking the tie…' : 'Swipe up/down to rotate, or tap Spin to pick a meal'}
       </Text>
       <View style={styles.stopperRow}>
-        <View style={[styles.stopperTriangle, styles.stopperLeft, { borderLeftColor: primary }]} />
         <View
-          style={[styles.orbitTrack, { width: ORBIT_TRACK_WIDTH, height: ORBIT_TRACK_HEIGHT }]}
-          {...panResponder.panHandlers}
+          style={[
+            styles.stopperTriangle,
+            styles.stopperLeft,
+            compact && styles.stopperTriangleCompact,
+            compact && styles.stopperLeftCompact,
+            { borderLeftColor: primary }
+          ]}
+        />
+        <View
+          style={[styles.orbitTrack, { width: trackWidth, height: trackHeight }]}
+          {...(isTiebreaker ? {} : panResponder.panHandlers)}
         >
           {renderOrder.map((orderedIndex) => (
             <OrbitingMealItem
-              key={meals[orderedIndex].id}
+              key={`${meals[orderedIndex].id}-${orderedIndex}`}
               meal={meals[orderedIndex]}
               index={orderedIndex}
               n={n}
-              orbit={orbit}
+              orbitPhase={orbitPhase}
               theme={themeColors}
+              radius={radius}
+              panelWidth={panelWidth}
+              panelHeight={panelHeight}
+              trackWidth={trackWidth}
+              trackHeight={trackHeight}
+              flipY={flipY}
+              flatScale={compact}
             />
           ))}
         </View>
-        <View style={[styles.stopperTriangle, styles.stopperRight, { borderRightColor: primary }]} />
+        <View
+          style={[
+            styles.stopperTriangle,
+            styles.stopperRight,
+            compact && styles.stopperTriangleCompact,
+            compact && styles.stopperRightCompact,
+            { borderRightColor: primary }
+          ]}
+        />
       </View>
-      <TouchableOpacity
-        style={[styles.spinButton, { backgroundColor: primary }]}
-        onPress={runSpin}
-      >
-        <Text style={styles.spinButtonText}>Spin</Text>
-      </TouchableOpacity>
+      {!isTiebreaker && (
+        <TouchableOpacity
+          style={[styles.spinButton, { backgroundColor: primary }]}
+          onPress={runSpin}
+        >
+          <Text style={styles.spinButtonText}>Spin</Text>
+        </TouchableOpacity>
+      )}
     </View>
   )
 }
@@ -378,30 +475,33 @@ const styles = StyleSheet.create({
     borderTopColor: 'transparent',
     borderBottomColor: 'transparent'
   },
+  stopperTriangleCompact: {
+    borderTopWidth: 8,
+    borderBottomWidth: 8
+  },
   stopperLeft: {
     borderLeftWidth: 22,
     marginRight: 4
   },
+  stopperLeftCompact: { borderLeftWidth: 14, marginRight: 2 },
   stopperRight: {
     borderRightWidth: 22,
     marginLeft: 4
   },
+  stopperRightCompact: { borderRightWidth: 14, marginLeft: 2 },
   orbitTrack: {
     alignSelf: 'center',
     justifyContent: 'center',
     alignItems: 'center',
     overflow: 'visible'
   },
-  orbitItem: {
+  orbitItemBase: {
     position: 'absolute',
     justifyContent: 'center',
-    alignItems: 'center',
-    left: ORBIT_TRACK_WIDTH / 2 - PANEL_WIDTH / 2,
-    top: ORBIT_TRACK_HEIGHT / 2 - PANEL_HEIGHT / 2
+    alignItems: 'center'
   },
   titlePanel: {
-    width: PANEL_WIDTH,
-    minHeight: PANEL_HEIGHT,
+    width: '100%',
     borderRadius: 12,
     borderWidth: 1,
     paddingHorizontal: 12,

@@ -7,6 +7,7 @@ import { useThemeColors } from '@/hooks/useTheme'
 import { useSocialAuth } from '@/hooks/useSocialAuth'
 import { useTabHeaderSlide } from '@/hooks/useTabHeaderSlide'
 import { getLastFocusedTabIndex } from '@/lib/tab-transition'
+import SwipeTabsContainer from '@/components/navigation/SwipeTabsContainer'
 
 const SOCIAL_TAB_INDEX = 2
 const STAGGER_OFFSET = 80
@@ -58,19 +59,20 @@ export default function SocialScreen () {
   })
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-        <Animated.View style={[styles.headerContent, headerSlideStyle]}>
-          <Users size={32} color={colors.primary} />
-          <Text style={[styles.title, { color: colors.text }]}>Meal Vote</Text>
-          <Text style={[styles.subtitle, { color: colors.textMuted }]}>
-            Vote with friends and family on what to eat
-          </Text>
-        </Animated.View>
-      </View>
-      <ScrollView contentContainerStyle={styles.content}>
-        {isAuthenticated ? (
-          <>
+    <SwipeTabsContainer tabIndex={SOCIAL_TAB_INDEX}>
+      <View style={[styles.container, { backgroundColor: colors.background }]}>
+        <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+          <Animated.View style={[styles.headerContent, headerSlideStyle]}>
+            <Users size={32} color={colors.primary} />
+            <Text style={[styles.title, { color: colors.text }]}>Meal Vote</Text>
+            <Text style={[styles.subtitle, { color: colors.textMuted }]}>
+              Vote with friends and family on what to eat
+            </Text>
+          </Animated.View>
+        </View>
+        <ScrollView contentContainerStyle={styles.content}>
+          {isAuthenticated ? (
+            <>
             {profile?.friend_code ? (
               <Animated.View style={slideStyle(slide1)}>
                 <View style={[styles.codeCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
@@ -140,9 +142,10 @@ export default function SocialScreen () {
               </TouchableOpacity>
             </Animated.View>
           </>
-        )}
-      </ScrollView>
-    </View>
+          )}
+        </ScrollView>
+      </View>
+    </SwipeTabsContainer>
   )
 }
 

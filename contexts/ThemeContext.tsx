@@ -57,7 +57,7 @@ export function ThemeProvider ({ children }: { children: React.ReactNode }) {
     }
   }, [profile?.auth_id, updateProfile])
 
-  const resolvedTheme = resolveTheme(themeMode, systemScheme)
+  const resolvedTheme = resolveTheme(themeMode, systemScheme ?? null)
 
   const value: ThemeContextValue = {
     themeMode,

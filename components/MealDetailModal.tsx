@@ -7,9 +7,11 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Dimensions,
-  Image
+  Image,
+  Linking
 } from 'react-native'
-import { X, CalendarPlus, Trash2, UtensilsCrossed, Share2, Heart } from 'lucide-react-native'
+import { useRouter } from 'expo-router'
+import { X, CalendarPlus, UtensilsCrossed, Share2, Heart, BookOpen, MapPin } from 'lucide-react-native'
 import { supabase } from '@/lib/supabase'
 import type { SavedMeal } from '@/types/calendar'
 
@@ -32,41 +34,53 @@ function MealDetailCard ({
   meal,
   onShareForVotes,
   onAddToCalendar,
-  onRemove,
   onFavorite,
-  variant = 'saved'
+  variant = 'saved',
+  onRecipe,
+  onMealNearMe
 }: {
   meal: SavedMeal
   onShareForVotes: (meal: SavedMeal) => void
   onAddToCalendar: (meal: SavedMeal) => void
-  onRemove: (meal: SavedMeal) => void
   onFavorite?: (meal: SavedMeal) => void
   variant?: 'saved' | 'mealOfTheDay'
+  onRecipe: (meal: SavedMeal, recipeId: string | null) => void
+  onMealNearMe: (meal: SavedMeal) => void
 }) {
   const [description, setDescription] = useState<string | null>(null)
   const [imageUrls, setImageUrls] = useState<string[]>([])
+  const [recipeId, setRecipeId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    supabase
-      .from('gallery_meals')
-      .select('description, image_urls')
-      .eq('base_id', meal.baseId)
-      .eq('protein_id', meal.proteinId)
-      .eq('vegetable_id', meal.vegetableId)
-      .ilike('title', meal.title.trim())
-      .limit(1)
-      .then(({ data }) => {
+    void (async () => {
+      try {
+        const { data } = await supabase
+          .from('gallery_meals')
+          .select('id, description, image_urls')
+          .eq('base_id', meal.baseId)
+          .eq('protein_id', meal.proteinId)
+          .eq('vegetable_id', meal.vegetableId)
+          .ilike('title', meal.title.trim())
+          .limit(1)
         if (cancelled) return
-        const rows = data as { description: string | null; image_urls: string[] | null }[] | null
+        const rows = data as { id: string; description: string | null; image_urls: string[] | null }[] | null
         const row = rows?.[0]
+        setRecipeId(row?.id ?? null)
         setDescription(row?.description ?? null)
         setImageUrls(Array.isArray(row?.image_urls) ? row.image_urls : [])
-      })
-      .catch(() => { if (!cancelled) { setDescription(null); setImageUrls([]) } })
-      .finally(() => { if (!cancelled) setLoading(false) })
+      } catch {
+        if (!cancelled) {
+          setDescription(null)
+          setImageUrls([])
+          setRecipeId(null)
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
     return () => { cancelled = true }
   }, [meal.id, meal.baseId, meal.proteinId, meal.vegetableId, meal.title])
 
@@ -99,18 +113,6 @@ function MealDetailCard ({
       ) : null}
 
       <View style={cardStyles.actionsRow}>
-        <TouchableOpacity
-          style={cardStyles.rowBtn}
-          onPress={() => onShareForVotes(meal)}>
-          <Share2 size={20} color="#6366f1" />
-          <Text style={cardStyles.rowBtnText}>Share</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[cardStyles.rowBtn, cardStyles.rowBtnAdd]}
-          onPress={() => onAddToCalendar(meal)}>
-          <CalendarPlus size={20} color="#ffffff" />
-          <Text style={[cardStyles.rowBtnText, cardStyles.rowBtnTextAdd]}>Add</Text>
-        </TouchableOpacity>
         {variant === 'mealOfTheDay' && onFavorite ? (
           <TouchableOpacity
             style={[cardStyles.rowBtn, cardStyles.rowBtnFavorite]}
@@ -121,11 +123,29 @@ function MealDetailCard ({
         ) : (
           <TouchableOpacity
             style={cardStyles.rowBtn}
-            onPress={() => onRemove(meal)}>
-            <Trash2 size={20} color="#ef4444" />
-            <Text style={[cardStyles.rowBtnText, cardStyles.rowBtnTextDanger]}>Delete</Text>
+            onPress={() => onRecipe(meal, recipeId)}>
+            <BookOpen size={20} color="#f59e0b" />
+            <Text style={cardStyles.rowBtnText}>Recipe</Text>
           </TouchableOpacity>
         )}
+        <TouchableOpacity
+          style={cardStyles.rowBtn}
+          onPress={() => onMealNearMe(meal)}>
+          <MapPin size={20} color="#0ea5e9" />
+          <Text style={cardStyles.rowBtnText}>Near me</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[cardStyles.rowBtn, cardStyles.rowBtnAdd]}
+          onPress={() => onAddToCalendar(meal)}>
+          <CalendarPlus size={20} color="#ffffff" />
+          <Text style={[cardStyles.rowBtnText, cardStyles.rowBtnTextAdd]}>Add</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={cardStyles.rowBtn}
+          onPress={() => onShareForVotes(meal)}>
+          <Share2 size={20} color="#6366f1" />
+          <Text style={cardStyles.rowBtnText}>Share</Text>
+        </TouchableOpacity>
       </View>
     </View>
   )
@@ -191,10 +211,12 @@ const cardStyles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
     paddingHorizontal: 20,
-    paddingBottom: 24
+    paddingBottom: 24,
+    flexWrap: 'wrap'
   },
   rowBtn: {
-    flex: 1,
+    flexGrow: 1,
+    flexBasis: '22%',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
@@ -218,9 +240,6 @@ const cardStyles = StyleSheet.create({
   },
   rowBtnTextFavorite: {
     color: '#ffffff'
-  },
-  rowBtnTextDanger: {
-    color: '#ef4444'
   }
 })
 
@@ -235,6 +254,22 @@ export default function MealDetailModal ({
   onFavorite
 }: MealDetailModalProps) {
   if (!visible || !meal) return null
+  const router = useRouter()
+
+  const handleMealNearMe = (m: SavedMeal) => {
+    const query = `${m.title.trim()} near me`
+    const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`
+    void Linking.openURL(url)
+  }
+
+  const handleRecipe = (m: SavedMeal, recipeId: string | null) => {
+    if (recipeId) {
+      router.push(`/recipe/${recipeId}`)
+      return
+    }
+    const url = `https://www.google.com/search?q=${encodeURIComponent(`${m.title} recipe`)}`
+    void Linking.openURL(url)
+  }
 
   return (
     <Modal
@@ -261,8 +296,9 @@ export default function MealDetailModal ({
               onAddToCalendar(m)
               onClose()
             }}
-            onRemove={(m) => {
-              onRemove(m)
+            onMealNearMe={handleMealNearMe}
+            onRecipe={(m, recipeId) => {
+              handleRecipe(m, recipeId)
               onClose()
             }}
             onFavorite={onFavorite ? (m) => { onFavorite(m); onClose() } : undefined}

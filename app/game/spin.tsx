@@ -6,6 +6,7 @@ import { useThemeColors } from '@/hooks/useTheme'
 import { useCalendarStore } from '@/store/calendar-store'
 import OrbitalSpinWheel from '@/components/OrbitalSpinWheel'
 import type { SavedMeal } from '@/types/calendar'
+import { useSystemBack } from '@/hooks/useSystemBack'
 
 export default function SpinScreen () {
   const router = useRouter()
@@ -20,13 +21,27 @@ export default function SpinScreen () {
   const handleWheelInteractionStart = useCallback(() => setWheelActive(true), [])
   const handleWheelInteractionEnd = useCallback(() => setWheelActive(false), [])
 
-  const mealsToSpin = useMemo((): SavedMeal[] => {
+  const handleBackToHome = useCallback(() => {
+    ;(router.replace as (href: string) => void)('/')
+  }, [router])
+
+  useSystemBack(handleBackToHome)
+
+  const mealsToSpinUnique = useMemo((): SavedMeal[] => {
     if (spinMealIds != null && spinMealIds.length > 0) {
       const byId = new Map(savedMeals.map((m) => [m.id, m]))
       return spinMealIds.map((id) => byId.get(id)).filter(Boolean) as SavedMeal[]
     }
     return savedMeals
   }, [savedMeals, spinMealIds])
+
+  const mealsToSpin = useMemo((): SavedMeal[] => {
+    const n = mealsToSpinUnique.length
+    if (n === 0) return []
+    if (n >= 10) return mealsToSpinUnique
+    const multiplier = Math.floor(10 / n) + 1 // smallest k where n*k > 10
+    return Array.from({ length: multiplier }, () => mealsToSpinUnique).flat()
+  }, [mealsToSpinUnique])
 
   useEffect(() => {
     return () => setSpinMealIds(null)
@@ -45,7 +60,7 @@ export default function SpinScreen () {
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-          <TouchableOpacity style={styles.backButton} onPress={() => (router.replace as (href: string) => void)('/')}>
+          <TouchableOpacity style={styles.backButton} onPress={handleBackToHome}>
             <ChevronLeft size={24} color={colors.text} />
           </TouchableOpacity>
           <Text style={[styles.title, { color: colors.text }]}>Spin to pick</Text>
@@ -68,7 +83,7 @@ export default function SpinScreen () {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-        <TouchableOpacity style={styles.backButton} onPress={() => (router.replace as (href: string) => void)('/')}>
+        <TouchableOpacity style={styles.backButton} onPress={handleBackToHome}>
           <ChevronLeft size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.title, { color: colors.text }]}>Spin to pick</Text>

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { ChevronLeft } from 'lucide-react-native'
@@ -8,6 +8,7 @@ import { getGameById } from '@/lib/game-registry'
 import { getAllSpawnableFoodIds } from '@/lib/food-asset-mapping'
 import type { RoundPurpose } from '@/types/game-session'
 import type { MealType, RoundResult } from '@/types/game-session'
+import { useSystemBack } from '@/hooks/useSystemBack'
 
 function getCollectedIdsFromRound (r: RoundResult | null): string[] {
   if (r?.purpose !== 'all_ingredients') return []
@@ -24,6 +25,12 @@ export default function RoundScreen () {
   const roundIndex = Math.max(0, Math.min(TOTAL_ROUNDS - 1, parseInt(String(rawIndex), 10)))
   const { mealType, gameIds, setRoundResult, setGameAddedNotTodayIds, getResultsForNavigation, roundResults } = useGameSessionStore()
   const markNotCollectedDoneRef = useRef(false)
+
+  const handleBackToHome = useCallback(() => {
+    ;(router.replace as (href: string) => void)('/')
+  }, [router])
+
+  useSystemBack(handleBackToHome)
 
   useEffect(() => {
     if (roundIndex !== 2 || markNotCollectedDoneRef.current) return
@@ -79,7 +86,7 @@ export default function RoundScreen () {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => (router.replace as (href: string) => void)('/')}>
+        <TouchableOpacity style={styles.backButton} onPress={handleBackToHome}>
           <ChevronLeft size={24} color="#1e293b" />
         </TouchableOpacity>
         <Text style={styles.title}>

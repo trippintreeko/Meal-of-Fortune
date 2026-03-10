@@ -18,12 +18,12 @@ export function useSocialAuth () {
   const [error, setError] = useState<string | null>(null)
 
   const fetchProfile = useCallback(async (authId: string) => {
-    const { data, err } = await supabase
+    const { data, error } = await supabase
       .from('profiles')
       .select('*')
       .eq('auth_id', authId)
       .single()
-    if (err) {
+    if (error) {
       setProfile(null)
       return
     }

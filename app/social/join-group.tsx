@@ -32,16 +32,17 @@ export default function JoinGroupScreen () {
       allowNewlines: false,
       disallowDangerous: true
     })
-    if (!nameResult.sanitized || !profile?.id) return
     if (!nameResult.ok) {
       setError(nameResult.error)
       return
     }
+    const name = nameResult.sanitized
+    if (!name || !profile?.id) return
     setLoading(true)
     setError(null)
     const groupCode = generateGroupCode()
     const { data: groupId, error: rpcErr } = await supabase.rpc('create_meal_group', {
-      p_name: nameResult.sanitized,
+      p_name: name,
       p_group_code: groupCode
     })
     if (rpcErr) {

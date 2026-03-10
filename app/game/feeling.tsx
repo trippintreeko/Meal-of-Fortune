@@ -17,6 +17,7 @@ import { useGameSessionStore } from '@/store/game-session'
 import { useFoodPreferencesStore } from '@/store/food-preferences-store'
 import { FEELINGS } from '@/lib/feelings'
 import type { FoodItem } from '@/types/database'
+import { useSystemBack } from '@/hooks/useSystemBack'
 
 const DEFAULT_MEAL_TYPE = 'lunch'
 
@@ -35,6 +36,12 @@ export default function FeelingScreen () {
   const [loadingFoods, setLoadingFoods] = useState(false)
   const loadPreferences = useFoodPreferencesStore(s => s.load)
   const getFoodStatus = useFoodPreferencesStore(s => s.getFoodStatus)
+
+  const handleBackToHome = useCallback(() => {
+    ;(router.replace as (href: string) => void)('/')
+  }, [router])
+
+  useSystemBack(handleBackToHome)
 
   useEffect(() => {
     if (mealType == null) {
@@ -141,7 +148,7 @@ export default function FeelingScreen () {
           }
         ]}
       >
-        <TouchableOpacity style={styles.backButton} onPress={() => (router.replace as (href: string) => void)('/')}>
+        <TouchableOpacity style={styles.backButton} onPress={handleBackToHome}>
           <ChevronLeft size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={styles.headerTextWrap}>

@@ -78,7 +78,7 @@ export default function VotingResultsStats ({
                 <Text style={[styles.voteCount, { color: c.textMuted }]}>{s.vote_count} vote{s.vote_count !== 1 ? 's' : ''}</Text>
                 <Text style={[styles.percentage, { color: c.text }]}>{s.percentage}%</Text>
                 {s.suggested_by_username ? (
-                  <Text style={[styles.suggester, { color: c.textMuted }]}>by {s.suggested_by_username}</Text>
+                  <Text style={[styles.suggester, { color: c.textMuted }]}>suggested by {s.suggested_by_username}</Text>
                 ) : null}
               </View>
             </View>

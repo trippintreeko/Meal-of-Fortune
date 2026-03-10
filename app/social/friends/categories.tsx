@@ -50,11 +50,11 @@ export default function FriendCategoriesScreen () {
       allowNewlines: false,
       disallowDangerous: true
     })
-    if (!result.sanitized || !profile?.id) return
     if (!result.ok) {
       Alert.alert('Invalid', result.error)
       return
     }
+    if (!result.sanitized || !profile?.id) return
     setSaving(true)
     const { error } = await supabase.from('friend_categories').insert({ user_id: profile.id, name: result.sanitized, color: newColor })
     setSaving(false)
