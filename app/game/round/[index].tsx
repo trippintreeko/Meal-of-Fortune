@@ -5,7 +5,7 @@ import { ChevronLeft } from 'lucide-react-native'
 import { useGameSessionStore, ROUND_INDEX_TO_PURPOSE, TOTAL_ROUNDS } from '@/store/game-session'
 import { useFoodPreferencesStore } from '@/store/food-preferences-store'
 import { getGameById } from '@/lib/game-registry'
-import { getAllSpawnableFoodIds } from '@/lib/food-asset-mapping'
+import { supabase } from '@/lib/supabase'
 import type { RoundPurpose } from '@/types/game-session'
 import type { MealType, RoundResult } from '@/types/game-session'
 import { useSystemBack } from '@/hooks/useSystemBack'
@@ -33,21 +33,30 @@ export default function RoundScreen () {
   useSystemBack(handleBackToHome)
 
   useEffect(() => {
-    if (roundIndex !== 2 || markNotCollectedDoneRef.current) return
+    if (roundIndex !== TOTAL_ROUNDS - 1 || markNotCollectedDoneRef.current) return
     const r0 = roundResults[0]
     const r1 = roundResults[1]
     const collected = new Set([
       ...getCollectedIdsFromRound(r0),
       ...getCollectedIdsFromRound(r1)
     ])
-    const allSpawnable = getAllSpawnableFoodIds()
-    const notCollected = allSpawnable.filter((id) => !collected.has(id))
-    if (notCollected.length === 0) return
-    markNotCollectedDoneRef.current = true
-    setGameAddedNotTodayIds(notCollected)
-    const { notTodayIds, setNotToday } = useFoodPreferencesStore.getState()
-    const merged = [...new Set([...notTodayIds, ...notCollected])]
-    void setNotToday(merged)
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase
+        .from('ingredient_assets')
+        .select('spoonacular_ingredient_id')
+      if (cancelled) return
+      if (error) return
+      const allSpawnable = (data ?? []).map((r) => String(r.spoonacular_ingredient_id))
+      const notCollected = allSpawnable.filter((id) => !collected.has(id))
+      if (notCollected.length === 0) return
+      markNotCollectedDoneRef.current = true
+      setGameAddedNotTodayIds(notCollected)
+      const { notTodayIds, setNotToday } = useFoodPreferencesStore.getState()
+      const merged = [...new Set([...notTodayIds, ...notCollected])]
+      void setNotToday(merged)
+    })()
+    return () => { cancelled = true }
   }, [roundIndex, roundResults])
 
   const gameId = gameIds[roundIndex]

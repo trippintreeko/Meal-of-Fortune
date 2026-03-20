@@ -1,9 +1,11 @@
 import { Tabs } from 'expo-router'
 import { Home, Calendar, Users, User } from 'lucide-react-native'
 import { useThemeColors } from '@/hooks/useTheme'
+import { useDoubleBackToExit } from '@/hooks/useDoubleBackToExit'
 
 export default function TabLayout () {
   const colors = useThemeColors()
+  useDoubleBackToExit()
   return (
     <Tabs
       screenOptions={{

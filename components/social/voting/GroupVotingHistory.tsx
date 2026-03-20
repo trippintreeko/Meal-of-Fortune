@@ -15,6 +15,7 @@ import {
 import { useRouter } from 'expo-router'
 import { Calendar, ClipboardList, ChevronRight, Trophy, XCircle } from 'lucide-react-native'
 import { supabase } from '@/lib/supabase'
+import { getDisplayUsername } from '@/lib/username-display'
 import type { SessionStatus } from '@/types/social'
 import HistorySettings from './HistorySettings'
 
@@ -162,7 +163,7 @@ export default function GroupVotingHistory ({
                 {entry.status === 'completed' && entry.winner_text ? (
                   <Text style={styles.winner} numberOfLines={2}>
                     Winner: {entry.winner_text}
-                    {entry.winner_suggested_by ? ` (${entry.winner_suggested_by})` : ''}
+                    {entry.winner_suggested_by ? ` (${getDisplayUsername(entry.winner_suggested_by)})` : ''}
                   </Text>
                 ) : null}
                 <View style={styles.meta}>

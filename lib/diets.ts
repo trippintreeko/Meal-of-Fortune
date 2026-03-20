@@ -2,7 +2,8 @@
  * Dietary restriction definitions for quick grouping in Food Preferences.
  * Names must match food_items.name (case-insensitive) from supabase/seed-food-items.sql.
  *
- * Favorites tab + diet: select all foods in allowedNames (foods OK for that diet).
+ * Favorites tab + diet: normally select all foods in allowedNames.
+ * Exception: ALLERGY_DIET_IDS_ON_FAVORITES_USE_EXCLUDED_ONLY — only excludedNames are used to hide meals (no bulk favorites).
  * Dislikes / Not Today tab + diet: select all foods in excludedNames (foods to avoid).
  */
 
@@ -15,7 +16,44 @@ export type DietDefinition = {
   excludedNames: string[]
 }
 
-const normalize = (name: string) => name.trim().toLowerCase()
+/** Normalized food item name — same rules as diet matching / food_items. */
+export function normalizeFoodItemName (name: string): string {
+  const base = (name ?? '')
+    .toLowerCase()
+    .trim()
+    .replace(/[-–]/g, ' ')
+    .replace(/\s+/g, ' ')
+
+  if (!base) return ''
+
+  // Canonicalize common ingredient naming variants so we match ingredient_assets names.
+  const corrected = base
+    .replace(/\bchesse\b/g, 'cheese')
+    .replace(/\bmayonaise\b/g, 'mayonnaise')
+    .replace(/\bmayonnaisse\b/g, 'mayonnaise')
+    .replace(/\bvinegarrette\b/g, 'vinaigrette')
+    .replace(/\byoghurt\b/g, 'yogurt')
+    .replace(/\boysters sauce\b/g, 'oyster sauce')
+    .replace(/\bvanilla yoghurt\b/g, 'vanilla yogurt')
+    // "balsamic" diets should cover balsamic vinaigrette too.
+    .replace(/\bbalsamic vinaigrette\b/g, 'balsamic')
+    .replace(/\bpackage artichoke hearts\b/g, 'artichoke hearts')
+    .replace(/\breduced fat mexican blend cheese\b/g, 'mexican cheese')
+
+  // Singularize a couple obvious forms.
+  if (/^celery stalks?$/.test(corrected)) return 'celery'
+  return corrected
+}
+
+/**
+ * On the Favorites tab, these diets only record “avoid these foods” for filtering (e.g. allergies),
+ * instead of adding the whole allowed-food list to favorites. Ids stay stable for AsyncStorage.
+ */
+export const ALLERGY_DIET_IDS_ON_FAVORITES_USE_EXCLUDED_ONLY: readonly string[] = ['nut-free']
+
+export function dietOnFavoritesOnlyAddsExclusions (dietId: string): boolean {
+  return ALLERGY_DIET_IDS_ON_FAVORITES_USE_EXCLUDED_ONLY.includes(dietId)
+}
 
 export const DIETS: DietDefinition[] = [
   {
@@ -105,7 +143,7 @@ export const DIETS: DietDefinition[] = [
   },
   {
     id: 'nut-free',
-    label: 'Nut-free',
+    label: 'Nut allergy',
     allowedNames: [
       'rice', 'quinoa', 'beans', 'bread', 'tortilla', 'oatmeal', 'toast', 'yogurt', 'cereal', 'pancakes', 'pasta', 'noodles',
       'couscous', 'polenta', 'wraps', 'bagel', 'hash browns', 'grits', 'ramen', 'risotto',
@@ -117,7 +155,33 @@ export const DIETS: DietDefinition[] = [
       'olives', 'pickles', 'hummus', 'guacamole', 'salsa', 'balsamic', 'dill', 'mint'
     ],
     excludedNames: [
-      'nuts'
+      'nuts',
+      'nut',
+      'peanuts',
+      'peanut',
+      'peanut butter',
+      'peanut oil',
+      'almonds',
+      'almond',
+      'walnuts',
+      'walnut',
+      'pecans',
+      'pecan',
+      'cashews',
+      'cashew',
+      'pistachios',
+      'pistachio',
+      'hazelnuts',
+      'hazelnut',
+      'macadamia',
+      'pine nuts',
+      'brazil nuts',
+      'chestnuts',
+      'chestnut',
+      'nutella',
+      'praline',
+      'marzipan',
+      'pesto'
     ]
   },
   {
@@ -227,17 +291,28 @@ export const DIETS: DietDefinition[] = [
 /** Get food names to select for Favorites when applying a diet (allowed foods) */
 export function getAllowedFoodNames (dietId: string): string[] {
   const diet = DIETS.find(d => d.id === dietId)
-  return diet ? diet.allowedNames.map(normalize) : []
+  return diet ? diet.allowedNames.map(normalizeFoodItemName) : []
 }
 
 /** Get food names to select for Dislikes/Not Today when applying a diet (excluded foods) */
 export function getExcludedFoodNames (dietId: string): string[] {
   const diet = DIETS.find(d => d.id === dietId)
-  return diet ? diet.excludedNames.map(normalize) : []
+  return diet ? diet.excludedNames.map(normalizeFoodItemName) : []
 }
 
 /** Return IDs of foods whose name is in the given set (normalized) */
 export function getFoodIdsByNames (foods: { id: string; name: string }[], namesNormalized: string[]): string[] {
-  const set = new Set(namesNormalized)
-  return foods.filter(f => set.has(normalize(f.name))).map(f => f.id)
+  const exact = new Set(namesNormalized)
+  const prefixRules = namesNormalized.filter(n => !n.includes(' '))
+
+  return foods
+    .filter(f => {
+      const n = normalizeFoodItemName(f.name)
+      if (!n) return false
+      if (exact.has(n)) return true
+      // For single-word diet rules (e.g. "balsamic"), allow prefix matches
+      // (e.g. "balsamic vinaigrette").
+      return prefixRules.some(prefix => n === prefix || n.startsWith(`${prefix} `))
+    })
+    .map(f => f.id)
 }

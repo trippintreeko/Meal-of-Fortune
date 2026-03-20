@@ -12,11 +12,15 @@
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "cleanup-orphan-auth": "node -r dotenv/config scripts/cleanup-orphan-auth-users.mjs",
-    "unsplash-fetch-gallery-images": "node -r dotenv/config scripts/unsplash-fetch-gallery-images.mjs",
     "deploy:delete-account": "supabase functions deploy delete-account --no-verify-jwt",
     "render-verification-email": "npx tsx scripts/render-verification-email.ts",
     "render-password-reset": "npx tsx scripts/render-password-reset.ts",
-    "render-account-deleted": "npx tsx scripts/render-account-deleted.ts"
+    "render-account-deleted": "npx tsx scripts/render-account-deleted.ts",
+    "spoonacular-match-and-save": "node -r dotenv/config scripts/spoonacular-match-and-save.mjs",
+    "spoonacular-list-matches": "node -r dotenv/config scripts/spoonacular-list-matches.mjs",
+    "spoonacular-sync-titles": "node -r dotenv/config scripts/spoonacular-sync-titles.mjs",
+    "spoonacular-list-duplicates": "node -r dotenv/config scripts/spoonacular-list-duplicates.mjs",
+    "spoonacular-dedupe-and-backfill": "node -r dotenv/config scripts/spoonacular-dedupe-and-backfill.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",

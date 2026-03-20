@@ -53,17 +53,20 @@ export default function DontWantTodaySettingsScreen () {
       return
     }
     setLoadingNames(true)
+    const spoonIds = ids
+      .map((id) => Number(id))
+      .filter((n) => Number.isFinite(n))
     const { data, error } = await supabase
-      .from('food_items')
-      .select('id, name')
-      .in('id', ids)
+      .from('ingredient_assets')
+      .select('spoonacular_ingredient_id, name')
+      .in('spoonacular_ingredient_id', spoonIds)
     setLoadingNames(false)
     if (error) {
       setNames(ids.map((id) => ({ id, name: id })))
       return
     }
-    const rows = (data ?? []) as FoodName[]
-    const byId = new Map(rows.map((r) => [r.id, r.name]))
+    const rows = (data ?? []) as Array<{ spoonacular_ingredient_id: number; name: string }>
+    const byId = new Map(rows.map((r) => [String(r.spoonacular_ingredient_id), r.name]))
     setNames(ids.map((id) => ({ id, name: byId.get(id) ?? id })))
   }, [])
 
@@ -95,11 +98,13 @@ export default function DontWantTodaySettingsScreen () {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} disabled={syncing}>
-        <ChevronLeft size={24} color={colors.text} />
-      </TouchableOpacity>
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()} disabled={syncing} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+          <ChevronLeft size={24} color={colors.text} />
+        </TouchableOpacity>
+        <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>Don't Want Today</Text>
+      </View>
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <Text style={[styles.title, { color: colors.text }]}>Don't Want Today</Text>
         <Text style={[styles.subtitle, { color: colors.textMuted }]}>
           Temporary exclusions reset at midnight. These match the items you marked "Not Today" in Food Preferences.
         </Text>
@@ -147,9 +152,17 @@ export default function DontWantTodaySettingsScreen () {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  backBtn: { position: 'absolute', top: 16, left: 16, zIndex: 10 },
-  scroll: { paddingTop: 16, paddingHorizontal: 20, paddingBottom: 40 },
-  title: { fontSize: 24, fontWeight: '700', marginBottom: 8 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 8,
+    gap: 8
+  },
+  backBtn: { padding: 4 },
+  scroll: { paddingTop: 8, paddingHorizontal: 20, paddingBottom: 40 },
+  title: { flex: 1, fontSize: 20, fontWeight: '700' },
   subtitle: { fontSize: 14, marginBottom: 16 },
   preferencesLink: {
     alignSelf: 'flex-start',

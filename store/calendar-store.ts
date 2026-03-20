@@ -11,8 +11,11 @@ type CalendarState = {
   savedMeals: SavedMeal[]
   /** When set, spin screen uses only these meal IDs; when null, spin uses all savedMeals */
   spinMealIds: string[] | null
+  /** Meals for Surprise Me spin (from food gallery); cleared when leaving surprise-spin screen */
+  surpriseSpinMeals: SavedMeal[] | null
   hydrated: boolean
   setSpinMealIds: (ids: string[] | null) => void
+  setSurpriseSpinMeals: (meals: SavedMeal[] | null) => void
   load: () => Promise<void>
   saveEvents: (events: CalendarEvent[]) => Promise<void>
   saveSavedMeals: (meals: SavedMeal[]) => Promise<void>
@@ -47,10 +50,15 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   events: [],
   savedMeals: [],
   spinMealIds: null,
+  surpriseSpinMeals: null,
   hydrated: false,
 
   setSpinMealIds (ids: string[] | null) {
     set({ spinMealIds: ids })
+  },
+
+  setSurpriseSpinMeals (meals: SavedMeal[] | null) {
+    set({ surpriseSpinMeals: meals })
   },
 
   async load () {
@@ -175,8 +183,16 @@ export const useCalendarStore = create<CalendarState>((set, get) => ({
   },
 
   async addSavedMeal (meal: Omit<SavedMeal, 'id' | 'createdAt'>) {
+    const galleryId = (meal.galleryMealId ?? '').trim()
+    if (galleryId) {
+      const existing = get().savedMeals.find(
+        (m) => (m.galleryMealId ?? '').trim() === galleryId
+      )
+      if (existing) return existing
+    }
     const newMeal: SavedMeal = {
       ...meal,
+      galleryMealId: galleryId || undefined,
       id: generateId(),
       createdAt: Date.now()
     }

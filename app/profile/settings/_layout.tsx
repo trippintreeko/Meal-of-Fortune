@@ -5,6 +5,7 @@ export default function SettingsLayout () {
     <Stack screenOptions={{ headerShown: false }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="notifications" />
+      <Stack.Screen name="clock-format" />
       <Stack.Screen name="privacy" />
       <Stack.Screen name="dont-want-today" />
       <Stack.Screen name="edit-profile" />

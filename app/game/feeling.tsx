@@ -1,27 +1,20 @@
-import { useEffect, useState, useMemo, useCallback } from 'react'
+import { useEffect, useCallback } from 'react'
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  TextInput,
-  ActivityIndicator
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { ChevronLeft, Search, Sparkles, Heart, X, Ban } from 'lucide-react-native'
+import { ChevronLeft, Sparkles } from 'lucide-react-native'
 import { useThemeColors } from '@/hooks/useTheme'
-import { supabase } from '@/lib/supabase'
 import { useGameSessionStore } from '@/store/game-session'
-import { useFoodPreferencesStore } from '@/store/food-preferences-store'
 import { FEELINGS } from '@/lib/feelings'
-import type { FoodItem } from '@/types/database'
 import { useSystemBack } from '@/hooks/useSystemBack'
 
 const DEFAULT_MEAL_TYPE = 'lunch'
-
-type FeelingTab = 'how' | 'what'
 
 export default function FeelingScreen () {
   const router = useRouter()
@@ -30,12 +23,6 @@ export default function FeelingScreen () {
   const setFeeling = useGameSessionStore(s => s.setFeeling)
   const mealType = useGameSessionStore(s => s.mealType)
   const startSession = useGameSessionStore(s => s.startSession)
-  const [selectedTab, setSelectedTab] = useState<FeelingTab>('how')
-  const [search, setSearch] = useState('')
-  const [foods, setFoods] = useState<FoodItem[]>([])
-  const [loadingFoods, setLoadingFoods] = useState(false)
-  const loadPreferences = useFoodPreferencesStore(s => s.load)
-  const getFoodStatus = useFoodPreferencesStore(s => s.getFoodStatus)
 
   const handleBackToHome = useCallback(() => {
     ;(router.replace as (href: string) => void)('/')
@@ -49,72 +36,10 @@ export default function FeelingScreen () {
     }
   }, [mealType, startSession])
 
-  useEffect(() => {
-    loadPreferences()
-  }, [loadPreferences])
-
-  useEffect(() => {
-    if (selectedTab !== 'what') return
-    let cancelled = false
-    setLoadingFoods(true)
-    void (async () => {
-      try {
-        const { data, error } = await supabase
-          .from('food_items')
-          .select('id, name, category')
-          .order('category', { ascending: true })
-          .order('name', { ascending: true })
-        if (cancelled) return
-        if (error) {
-          setFoods([])
-        } else {
-          const rows = (data ?? []) as { id: string; name: string; category: string }[]
-          setFoods(rows.map(row => ({
-            id: row.id,
-            name: row.name,
-            category: row.category as FoodItem['category'],
-            created_at: ''
-          })))
-        }
-      } catch {
-        setFoods([])
-      } finally {
-        if (!cancelled) setLoadingFoods(false)
-      }
-    })()
-    return () => { cancelled = true }
-  }, [selectedTab])
-
-  const filteredFoods = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return foods
-    return foods.filter(
-      (f) =>
-        f.name.toLowerCase().includes(q) ||
-        (f.category ?? '').toLowerCase().includes(q)
-    )
-  }, [foods, search])
-
-  const groupedFoods = useMemo(() => {
-    const acc: Record<string, FoodItem[]> = {}
-    for (const food of filteredFoods) {
-      const cat = food.category ?? 'other'
-      if (!acc[cat]) acc[cat] = []
-      acc[cat].push(food)
-    }
-    return acc
-  }, [filteredFoods])
-
   const handleSelect = useCallback((feelingId: string) => {
     startSession(DEFAULT_MEAL_TYPE)
     setFeeling(feelingId)
     router.replace({ pathname: '/food-gallery', params: { feeling: feelingId } })
-  }, [startSession, setFeeling, router])
-
-  const handleSelectFood = useCallback((foodId: string) => {
-    startSession(DEFAULT_MEAL_TYPE)
-    setFeeling(null)
-    router.replace({ pathname: '/food-gallery', params: { feeling: '', food: foodId } })
   }, [startSession, setFeeling, router])
 
   const handleSkip = useCallback(() => {
@@ -129,11 +54,6 @@ export default function FeelingScreen () {
       </View>
     )
   }
-
-  const tabs: { id: FeelingTab; label: string }[] = [
-    { id: 'how', label: 'How are you feeling?' },
-    { id: 'what', label: 'What are you feeling?' }
-  ]
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
@@ -154,137 +74,34 @@ export default function FeelingScreen () {
         <View style={styles.headerTextWrap}>
           <Text style={[styles.title, { color: colors.text }]}>Feelings</Text>
           <Text style={[styles.subtitle, { color: colors.textMuted }]} numberOfLines={1}>
-            {selectedTab === 'how'
-              ? 'Pick a vibe — we\'ll use it to steer your picks'
-              : 'Search and tap a keyword'}
+            Pick a vibe — we&apos;ll use it to steer your picks
           </Text>
         </View>
       </View>
 
-      <View style={[styles.tabs, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-        {tabs.map((tab) => (
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}>
+        {FEELINGS.map((feeling) => (
           <TouchableOpacity
-            key={tab.id}
-            style={[
-              styles.tab,
-              selectedTab === tab.id && styles.tabActive
-            ]}
-            onPress={() => setSelectedTab(tab.id)}>
-            <Text
-              style={[
-                styles.tabText,
-                { color: colors.textMuted },
-                selectedTab === tab.id && styles.tabTextActive
-              ]}
-              numberOfLines={1}>
-              {tab.label}
-            </Text>
+            key={feeling.id}
+            style={[styles.card, { borderLeftColor: feeling.color ?? colors.primary, borderColor: colors.cardBorder, backgroundColor: colors.card }]}
+            onPress={() => handleSelect(feeling.id)}
+            activeOpacity={0.7}>
+            <View style={[styles.cardIcon, { backgroundColor: `${feeling.color ?? colors.primary}20` }]}>
+              <Sparkles size={22} color={feeling.color ?? colors.primary} />
+            </View>
+            <View style={styles.cardText}>
+              <Text style={[styles.cardLabel, { color: colors.text }]}>{feeling.label}</Text>
+              <Text style={[styles.cardDescription, { color: colors.textMuted }]}>{feeling.description}</Text>
+            </View>
           </TouchableOpacity>
         ))}
-      </View>
-
-      {selectedTab === 'how' ? (
-        <ScrollView
-          style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
-          showsVerticalScrollIndicator={false}>
-          {FEELINGS.map((feeling) => (
-            <TouchableOpacity
-              key={feeling.id}
-              style={[styles.card, { borderLeftColor: feeling.color ?? colors.primary, borderColor: colors.cardBorder, backgroundColor: colors.card }]}
-              onPress={() => handleSelect(feeling.id)}
-              activeOpacity={0.7}>
-              <View style={[styles.cardIcon, { backgroundColor: `${feeling.color ?? colors.primary}20` }]}>
-                <Sparkles size={22} color={feeling.color ?? colors.primary} />
-              </View>
-              <View style={styles.cardText}>
-                <Text style={[styles.cardLabel, { color: colors.text }]}>{feeling.label}</Text>
-                <Text style={[styles.cardDescription, { color: colors.textMuted }]}>{feeling.description}</Text>
-              </View>
-            </TouchableOpacity>
-          ))}
-          <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
-            <Text style={[styles.skipButtonText, { color: colors.textMuted }]}>Skip — no preference</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      ) : (
-        <>
-          <View style={[styles.searchRow, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
-            <Search size={20} color={colors.textMuted} style={styles.searchIcon} />
-            <TextInput
-              style={[styles.searchInput, { color: colors.text }]}
-              placeholder="Search foods (beans, bread, cereal…)"
-              placeholderTextColor={colors.placeholder}
-              value={search}
-              onChangeText={setSearch}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </View>
-          {loadingFoods ? (
-            <View style={[styles.loadingWrap, { backgroundColor: colors.background }]}>
-              <ActivityIndicator size="large" color={colors.primary} />
-              <Text style={[styles.loadingText, { color: colors.textMuted }]}>Loading foods…</Text>
-            </View>
-          ) : (
-            <ScrollView
-              style={styles.scroll}
-              contentContainerStyle={styles.scrollContent}
-              showsVerticalScrollIndicator={false}>
-              {Object.entries(groupedFoods).map(([category, items]) => (
-                <View key={category} style={styles.categorySection}>
-                  <Text style={[styles.categoryTitle, { color: colors.textMuted }]}>{category.toUpperCase()}</Text>
-                  <View style={styles.foodGrid}>
-                    {items.map((food) => {
-                      const status = getFoodStatus(food.id)
-                      const statusConfig = status === 'favorite'
-                        ? { color: colors.primary, Icon: Heart }
-                        : status === 'dislike'
-                          ? { color: colors.destructive, Icon: X }
-                          : status === 'never_today'
-                            ? { color: '#f59e0b', Icon: Ban }
-                            : null
-                      const StatusIcon = statusConfig?.Icon
-                      return (
-                        <TouchableOpacity
-                          key={food.id}
-                          style={[
-                            styles.foodItem,
-                            { backgroundColor: colors.card, borderColor: colors.cardBorder },
-                            statusConfig != null && {
-                              borderColor: statusConfig.color,
-                              borderWidth: 2,
-                              backgroundColor: `${statusConfig.color}18`
-                            }
-                          ]}
-                          onPress={() => handleSelectFood(food.id)}
-                          activeOpacity={0.7}>
-                          {StatusIcon != null && statusConfig != null && (
-                            <View style={[styles.foodStatusIcon, { backgroundColor: statusConfig.color }]}>
-                              <StatusIcon size={12} color="#ffffff" />
-                            </View>
-                          )}
-                          <Text style={[styles.foodName, { color: colors.text }, statusConfig != null && { color: statusConfig.color }]}>
-                            {food.name}
-                          </Text>
-                        </TouchableOpacity>
-                      )
-                    })}
-                  </View>
-                </View>
-              ))}
-              {filteredFoods.length === 0 && !loadingFoods && (
-                <Text style={[styles.noResults, { color: colors.textMuted }]}>
-                  {'No foods match "' + search + '". Try something else.'}
-                </Text>
-              )}
-              <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
-                <Text style={[styles.skipButtonText, { color: colors.textMuted }]}>Skip — no preference</Text>
-              </TouchableOpacity>
-            </ScrollView>
-          )}
-        </>
-      )}
+        <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
+          <Text style={[styles.skipButtonText, { color: colors.textMuted }]}>Skip — no preference</Text>
+        </TouchableOpacity>
+      </ScrollView>
     </View>
   )
 }

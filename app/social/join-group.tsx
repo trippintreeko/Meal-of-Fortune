@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, Share } from 'react-native'
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, ActivityIndicator, ScrollView, Alert } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useThemeColors } from '@/hooks/useTheme'
 import { useSocialAuth } from '@/hooks/useSocialAuth'
@@ -55,8 +55,9 @@ export default function JoinGroupScreen () {
   }
 
   const joinByCode = async () => {
-    const code = sanitizeText(joinCode, { allowNewlines: false, maxLength: MAX_LENGTH.friendCode }).trim().toUpperCase()
-    if (!code) return
+    const codePart = sanitizeText(joinCode, { allowNewlines: false, maxLength: 10 }).trim().toUpperCase().replace(/^GRP-?/i, '')
+    const code = codePart ? `GRP-${codePart}` : ''
+    if (!codePart) return
     setLoading(true)
     setError(null)
     try {
@@ -66,7 +67,22 @@ export default function JoinGroupScreen () {
         setLoading(false)
         return
       }
-      router.replace('/social/groups')
+      setError(null)
+      setJoinCode('')
+      setLoading(false)
+      const result = data as { group_id: string; status: 'already_member' | 'request_pending' | 'request_sent' } | null
+      const status = result?.status ?? 'request_sent'
+      if (status === 'already_member') {
+        router.replace('/social/groups')
+      } else if (status === 'request_pending') {
+        Alert.alert('Already requested', 'You already have a pending request for this group. The leader will approve it when ready.', [{ text: 'OK', onPress: () => router.replace('/social/groups') }])
+      } else {
+        Alert.alert(
+          'Request sent',
+          'The group leader will be notified and can approve your request. You\'ll see the group in your list once approved.',
+          [{ text: 'OK', onPress: () => router.replace('/social/groups') }]
+        )
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to join')
     }
@@ -121,21 +137,30 @@ export default function JoinGroupScreen () {
         <>
           <Text style={[styles.label, { color: colors.textMuted }]}>Group code</Text>
           <Text style={[styles.hintJoin, { color: colors.textMuted }]}>
-            Use a group code (e.g. GRP-ABC123), not your friend code. Friend codes like TRI-2486 are for adding friends; group codes are for joining a meal group.
+            Use a group code from a friend. Friend codes like TRI-2486 are for adding friends; group codes are for joining a meal group.
           </Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder, color: colors.text }]}
-            value={joinCode}
-            onChangeText={(t) => { setJoinCode(t.toUpperCase()); setError(null) }}
-            placeholder="GRP-ABC123"
-            placeholderTextColor={colors.placeholder}
-            autoCapitalize="characters"
-          />
+          <View style={[styles.codeInputRow, { backgroundColor: colors.inputBg, borderColor: colors.inputBorder }]}>
+            <Text style={[styles.codePrefix, { color: colors.text }]}>GRP-</Text>
+            <TextInput
+              style={[styles.codeInput, { color: colors.text }]}
+              value={joinCode}
+              onChangeText={(t) => {
+                const upper = t.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)
+                setJoinCode(upper)
+                setError(null)
+              }}
+              placeholder="ABC123"
+              placeholderTextColor={colors.placeholder}
+              autoCapitalize="characters"
+              maxLength={6}
+              keyboardType="default"
+            />
+          </View>
           {error ? <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
           <TouchableOpacity
             style={[styles.button, { backgroundColor: colors.primary }, loading && styles.buttonDisabled]}
             onPress={joinByCode}
-            disabled={loading || !joinCode.trim()}
+            disabled={loading || joinCode.length < 6}
           >
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Join group</Text>}
           </TouchableOpacity>
@@ -166,6 +191,24 @@ const styles = StyleSheet.create({
   label: { fontSize: 14, fontWeight: '600', marginBottom: 8 },
   hintJoin: { fontSize: 13, marginBottom: 12 },
   input: { borderWidth: 1, borderRadius: 12, padding: 14, fontSize: 16, marginBottom: 16 },
+  codeInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    marginBottom: 16
+  },
+  codePrefix: {
+    fontSize: 16,
+    fontWeight: '600'
+  },
+  codeInput: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingLeft: 4,
+    fontSize: 16
+  },
   error: { fontSize: 14, marginBottom: 12 },
   button: { borderRadius: 12, padding: 16, alignItems: 'center' },
   buttonDisabled: { opacity: 0.7 },

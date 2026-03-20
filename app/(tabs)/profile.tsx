@@ -12,7 +12,8 @@ import {
   Platform,
   Animated,
   Easing,
-  Pressable
+  Pressable,
+  Alert
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useFocusEffect } from '@react-navigation/native'
@@ -21,6 +22,7 @@ import { useThemeColors, useTheme } from '@/hooks/useTheme'
 import { useSocialAuth } from '@/hooks/useSocialAuth'
 import { useTabHeaderSlide } from '@/hooks/useTabHeaderSlide'
 import { getLastFocusedTabIndex } from '@/lib/tab-transition'
+import { getDisplayUsername } from '@/lib/username-display'
 import SwipeTabsContainer from '@/components/navigation/SwipeTabsContainer'
 
 const PROFILE_TAB_INDEX = 3
@@ -142,7 +144,7 @@ export default function ProfileScreen () {
           ) : isAuthenticated && profile ? (
             <View style={[styles.accountCard, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
               <Text style={[styles.accountLabel, { color: colors.textMuted }]}>Username</Text>
-              <Text style={[styles.accountValue, { color: colors.text }]}>{profile.username}</Text>
+              <Text style={[styles.accountValue, { color: colors.text }]}>{getDisplayUsername(profile.username)}</Text>
               {profile.email ? (
                 <>
                   <Text style={[styles.accountLabel, { color: colors.textMuted }]}>Email</Text>
@@ -167,7 +169,19 @@ export default function ProfileScreen () {
                   <Text style={[styles.accountValue, { color: colors.text }]}>{profile.dietary_restrictions.join(', ')}</Text>
                 </>
               ) : null}
-              <TouchableOpacity style={styles.signOutBtn} onPress={() => signOut()}>
+              <TouchableOpacity
+                style={styles.signOutBtn}
+                onPress={() => {
+                  Alert.alert(
+                    'Sign out?',
+                    'Are you sure you want to sign out?',
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Sign out', style: 'destructive', onPress: () => { void signOut() } }
+                    ]
+                  )
+                }}
+              >
                 <LogOut size={20} color={colors.destructive} />
                 <Text style={[styles.signOutText, { color: colors.destructive }]}>Sign out</Text>
               </TouchableOpacity>

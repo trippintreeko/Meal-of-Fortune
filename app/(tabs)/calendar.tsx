@@ -9,27 +9,38 @@ import {
   Alert,
   Animated,
   Easing,
-  Dimensions
+  Dimensions,
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useFocusEffect } from '@react-navigation/native'
 import { useTabHeaderSlide } from '@/hooks/useTabHeaderSlide'
 import { getLastFocusedTabIndex } from '@/lib/tab-transition'
-import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, Trash2, UtensilsCrossed, Gamepad2, Sparkles, Image } from 'lucide-react-native'
+import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, Plus, Trash2, UtensilsCrossed, Gamepad2, Sparkles, Image, Coffee, Sun, Moon } from 'lucide-react-native'
 import { useThemeColors } from '@/hooks/useTheme'
+import { supabase } from '@/lib/supabase'
 import { useMealOfTheDay } from '@/hooks/useMealOfTheDay'
 import { useGameSessionStore } from '@/store/game-session'
 import { useCalendarStore } from '@/store/calendar-store'
 import SwipeTabsContainer from '@/components/navigation/SwipeTabsContainer'
 import MealDetailModal from '@/components/MealDetailModal'
-import { dateKey } from '@/types/calendar'
+import { dateKey, addDaysToDateKey, formatShortDate, slotOrder, parseDateKey } from '@/types/calendar'
 import { scheduleMealReminder, cancelScheduledNotification } from '@/lib/notifications'
 import DayDetailModal from '@/components/calendar/DayDetailModal'
 import AddToCalendarModal from '@/components/calendar/AddToCalendarModal'
 import MoveEventModal from '@/components/calendar/MoveEventModal'
 import SetReminderModal from '@/components/calendar/SetReminderModal'
 import PickSavedMealModal from '@/components/calendar/PickSavedMealModal'
+import WeekTimeGrid, { type WeekTimeGridHandle } from '@/components/calendar/WeekTimeGrid'
+import WeekPlannerMealModal from '@/components/calendar/WeekPlannerMealModal'
+import { SavedMealWeekDragChip } from '@/components/calendar/SavedMealWeekDragChip'
 import type { CalendarEvent, SavedMeal, MealSlot } from '@/types/calendar'
+
+const SLOT_LABELS: Record<MealSlot, string> = {
+  breakfast: 'Breakfast',
+  lunch: 'Lunch',
+  dinner: 'Dinner'
+}
+const SLOT_ICONS = { breakfast: Coffee, lunch: Sun, dinner: Moon }
 import { getEmptyCalendarMessage } from '@/lib/empty-state-copy'
 
 const monthNames = [
@@ -47,10 +58,96 @@ const ACTION_BTN_WIDTH = 103.8
 const ACTION_BTN_HEIGHT = 54.4
 const ACTION_BTN_GAP = 10
 
+const DRAG_GHOST_W = 136
+const DRAG_GHOST_OFFSET_Y = 36
+type WeekRangeMode = 'monday_to_sunday' | 'yesterday_to_plus_five'
+
+function mondayForDate (input: Date): Date {
+  const d = new Date(input)
+  const diff = (d.getDay() + 6) % 7
+  d.setDate(d.getDate() - diff)
+  return d
+}
+
+function weekStartForMode (mode: WeekRangeMode): Date {
+  const today = new Date()
+  if (mode === 'yesterday_to_plus_five') {
+    const start = new Date(today)
+    start.setDate(start.getDate() - 1)
+    return start
+  }
+  return mondayForDate(today)
+}
+
+function slotDragGhostColors (slot: MealSlot, primary: string): { bg: string; accent: string } {
+  if (slot === 'breakfast') return { bg: 'rgba(254, 243, 199, 0.97)', accent: '#d97706' }
+  if (slot === 'lunch') return { bg: 'rgba(207, 250, 254, 0.97)', accent: '#0891b2' }
+  return { bg: 'rgba(237, 233, 254, 0.97)', accent: primary }
+}
+
+const FB_BASE = '11111111-1111-1111-1111-111111111101'
+const FB_PROTEIN = '22222222-2222-2222-2222-222222222201'
+const FB_VEG = '33333333-3333-3333-3333-333333333302'
+
+const BASE_GROUP_COLORS: Record<string, string> = {
+  rice: '#f59e0b',
+  noodles: '#8b5cf6',
+  quinoa: '#22c55e',
+  tortilla: '#f97316',
+  bread: '#eab308',
+  toast: '#ca8a04',
+  pasta: '#06b6d4',
+  breakfast: '#ec4899',
+  potato: '#a16207',
+  corn: '#eab308',
+  pizza: '#dc2626',
+  dough: '#b45309',
+  legume: '#65a30d',
+  plant: '#10b981',
+  fermented: '#7c3aed',
+  seaweed: '#0d9488',
+  seed: '#84cc16',
+  soup: '#0ea5e9',
+  salad: '#14b8a6',
+  sushi: '#ef4444',
+  dessert: '#d946ef',
+  any: '#64748b',
+  featured: '#8b5cf6'
+}
+
+function normalizeMealMethod (method: string | null | undefined): string {
+  return (method ?? '').trim().toLowerCase()
+}
+
+function mealKeyFromParts (baseId: string | null | undefined, proteinId: string | null | undefined, vegetableId: string | null | undefined, method: string | null | undefined): string {
+  return `${baseId ?? ''}|${proteinId ?? ''}|${vegetableId ?? ''}|${normalizeMealMethod(method)}`
+}
+
+function calendarEventToSavedMeal (
+  ev: CalendarEvent,
+  getSavedMeal: (id: string) => SavedMeal | undefined
+): SavedMeal {
+  if (ev.savedMealId) {
+    const m = getSavedMeal(ev.savedMealId)
+    if (m) return m
+  }
+  return {
+    id: ev.savedMealId ?? ev.id,
+    title: ev.title,
+    baseId: ev.baseId ?? FB_BASE,
+    proteinId: ev.proteinId ?? FB_PROTEIN,
+    vegetableId: ev.vegetableId ?? FB_VEG,
+    method: ev.method ?? 'grilled',
+    createdAt: 0
+  }
+}
+
 export default function CalendarScreen () {
   const colors = useThemeColors()
   const headerSlideStyle = useTabHeaderSlide(1) // Calendar tab index
   const [currentDate, setCurrentDate] = useState(new Date())
+  const [calendarView, setCalendarView] = useState<'month' | 'week'>('week')
+  const [weekRangeMode, setWeekRangeMode] = useState<WeekRangeMode>('monday_to_sunday')
   const [selectedDate, setSelectedDate] = useState<string | null>(null)
   const [addModalVisible, setAddModalVisible] = useState(false)
   const [addModalMeal, setAddModalMeal] = useState<SavedMeal | null>(null)
@@ -61,6 +158,36 @@ export default function CalendarScreen () {
   const [reminderEvent, setReminderEvent] = useState<CalendarEvent | null>(null)
   const [pickMealForDate, setPickMealForDate] = useState<string | null>(null)
   const [showMealOfTheDayModal, setShowMealOfTheDayModal] = useState(false)
+  const [weekDragActive, setWeekDragActive] = useState(false)
+  const [savedMealDragAt, setSavedMealDragAt] = useState<{ ax: number; ay: number } | null>(null)
+  const [savedMealWeekDragging, setSavedMealWeekDragging] = useState(false)
+  const [weekPlannerMeal, setWeekPlannerMeal] = useState<SavedMeal | null>(null)
+  const [eventColorByCombo, setEventColorByCombo] = useState<Record<string, string>>({})
+  const [eventColorByTitle, setEventColorByTitle] = useState<Record<string, string>>({})
+  const weekGridRef = useRef<WeekTimeGridHandle | null>(null)
+  const savedMealForDragRef = useRef<SavedMeal | null>(null)
+  const lastSavedDragXY = useRef({ ax: 0, ay: 0 })
+  const savedMealDragEndLock = useRef(false)
+  const weekMainScrollRef = useRef<ScrollView>(null)
+  const weekScrollYRef = useRef(0)
+  const weekContentHeightRef = useRef(0)
+  const weekViewportHeightRef = useRef(1)
+  const scrollViewportWinRef = useRef({ top: 0, bottom: 800 })
+  const lastDragAyRef = useRef(0)
+  const [eventDragGhost, setEventDragGhost] = useState<{
+    ax: number
+    ay: number
+    title: string
+    slot: MealSlot
+  } | null>(null)
+  const calendarRootRef = useRef<View>(null)
+  const [dragLayerOrigin, setDragLayerOrigin] = useState({ x: 0, y: 0 })
+
+  const syncDragLayerOrigin = useCallback(() => {
+    calendarRootRef.current?.measureInWindow((x, y) => {
+      setDragLayerOrigin({ x, y })
+    })
+  }, [])
 
   const router = useRouter()
   const { meal: mealOfTheDay, loading: mealOfTheDayLoading } = useMealOfTheDay()
@@ -78,7 +205,8 @@ export default function CalendarScreen () {
     deleteEvent,
     moveEvent,
     copyEvent,
-    removeSavedMeal
+    removeSavedMeal,
+    getSavedMeal
   } = useCalendarStore()
 
   const mealOfTheDayAsSaved = useMemo((): SavedMeal | null => {
@@ -124,6 +252,46 @@ export default function CalendarScreen () {
     load()
   }, [load])
 
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const { data, error } = await supabase
+        .from('gallery_meals')
+        .select('title, base_id, protein_id, vegetable_id, cooking_method, base_group')
+      if (cancelled || error) return
+      const rows = (data ?? []) as Array<{
+        title: string | null
+        base_id: string | null
+        protein_id: string | null
+        vegetable_id: string | null
+        cooking_method: string | null
+        base_group: string | null
+      }>
+      const comboMap: Record<string, string> = {}
+      const titleMap: Record<string, string> = {}
+      for (const row of rows) {
+        const color = BASE_GROUP_COLORS[row.base_group ?? 'any'] ?? BASE_GROUP_COLORS.any
+        const comboKey = mealKeyFromParts(row.base_id, row.protein_id, row.vegetable_id, row.cooking_method)
+        if (comboKey !== '|||') comboMap[comboKey] = color
+        const titleKey = (row.title ?? '').trim().toLowerCase()
+        if (titleKey) titleMap[titleKey] = color
+      }
+      if (cancelled) return
+      setEventColorByCombo(comboMap)
+      setEventColorByTitle(titleMap)
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const resolveEventColor = useCallback((ev: CalendarEvent): string | undefined => {
+    const comboKey = mealKeyFromParts(ev.baseId, ev.proteinId, ev.vegetableId, ev.method)
+    const byCombo = eventColorByCombo[comboKey]
+    if (byCombo) return byCombo
+    const titleKey = (ev.title ?? '').trim().toLowerCase()
+    if (titleKey) return eventColorByTitle[titleKey]
+    return undefined
+  }, [eventColorByCombo, eventColorByTitle])
+
   const daysInMonth = new Date(
     currentDate.getFullYear(),
     currentDate.getMonth() + 1,
@@ -153,6 +321,12 @@ export default function CalendarScreen () {
     }
     return rows
   }, [numRows, firstDayOfMonth, daysInMonth])
+
+  const [weekStartKey, setWeekStartKey] = useState(() => dateKey(weekStartForMode('monday_to_sunday')))
+  const weekDateKeys = useMemo(
+    () => Array.from({ length: 8 }, (_, i) => addDaysToDateKey(weekStartKey, i)),
+    [weekStartKey]
+  )
 
   const CALENDAR_TAB_INDEX = 1
   const STAGGER_OFFSET = 80
@@ -185,6 +359,7 @@ export default function CalendarScreen () {
 
   useFocusEffect(
     useCallback(() => {
+      setWeekStartKey(dateKey(weekStartForMode(weekRangeMode)))
       const prev = getLastFocusedTabIndex()
       const direction = CALENDAR_TAB_INDEX - prev
       const fromX = direction > 0 ? STAGGER_OFFSET : direction < 0 ? -STAGGER_OFFSET : 0
@@ -230,8 +405,18 @@ export default function CalendarScreen () {
         sectionSlide2.setValue(0)
         sectionSlide3.setValue(0)
       }
-    }, [sectionSlide1, sectionSlide2, sectionSlide3])
+    }, [sectionSlide1, sectionSlide2, sectionSlide3, weekRangeMode])
   )
+
+  useEffect(() => {
+    setWeekStartKey(dateKey(weekStartForMode(weekRangeMode)))
+  }, [weekRangeMode])
+
+  const weekStartDate = useMemo(() => parseDateKey(weekStartKey), [weekStartKey])
+  const weekEvents = useMemo(() => {
+    const keys = new Set(weekDateKeys.slice(0, 7))
+    return events.filter(e => keys.has(e.date))
+  }, [events, weekDateKeys])
 
   const previousMonth = () => {
     setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1))
@@ -268,6 +453,111 @@ export default function CalendarScreen () {
     setAddModalDefaultDate(undefined)
     setAddModalVisible(true)
   }
+
+  const handleSavedMealWeekDragStart = useCallback((meal: SavedMeal) => {
+    savedMealForDragRef.current = meal
+    setSavedMealWeekDragging(true)
+    setWeekDragActive(true)
+    syncDragLayerOrigin()
+    requestAnimationFrame(() => {
+      ;(weekMainScrollRef.current as unknown as View | null)?.measureInWindow(
+        (x: number, y: number, w: number, h: number) => {
+          scrollViewportWinRef.current = { top: y, bottom: y + h }
+        }
+      )
+    })
+  }, [syncDragLayerOrigin])
+
+  const applyWeekDragEdgeScroll = useCallback((ay: number) => {
+    const scroll = weekMainScrollRef.current
+    if (!scroll) return
+    let { top, bottom } = scrollViewportWinRef.current
+    const winH = Dimensions.get('window').height
+    if (bottom - top < 100) {
+      top = Math.min(top, 160) || 140
+      bottom = Math.max(bottom, winH - 88) || winH - 90
+    }
+    const zone = 105
+    const maxStep = 36
+    const maxScrollY = Math.max(
+      0,
+      weekContentHeightRef.current - weekViewportHeightRef.current
+    )
+    if (ay < top + zone) {
+      const depth = Math.max(0, (top + zone - ay) / zone)
+      const intensity = Math.max(0.2, Math.min(1, depth))
+      const step = maxStep * intensity
+      const next = Math.max(0, weekScrollYRef.current - step)
+      weekScrollYRef.current = next
+      scroll.scrollTo({ y: next, animated: false })
+    } else if (ay > bottom - zone) {
+      const depth = Math.max(0, (ay - (bottom - zone)) / zone)
+      const intensity = Math.max(0.2, Math.min(1, depth))
+      const step = maxStep * intensity
+      const next =
+        maxScrollY > 0
+          ? Math.min(maxScrollY, weekScrollYRef.current + step)
+          : weekScrollYRef.current + step
+      weekScrollYRef.current = next
+      scroll.scrollTo({ y: next, animated: false })
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!weekDragActive || calendarView !== 'week') return
+    const id = setInterval(() => {
+      applyWeekDragEdgeScroll(lastDragAyRef.current)
+    }, 40)
+    return () => clearInterval(id)
+  }, [weekDragActive, calendarView, applyWeekDragEdgeScroll])
+
+  const handleSavedMealWeekDragMove = useCallback((ax: number, ay: number) => {
+    lastDragAyRef.current = ay
+    lastSavedDragXY.current = { ax, ay }
+    setSavedMealDragAt({ ax, ay })
+  }, [])
+
+  const handleEventDragFinger = useCallback(
+    (p: { ax: number; ay: number; title: string; slot: MealSlot } | null) => {
+      if (p) {
+        lastDragAyRef.current = p.ay
+        setEventDragGhost(p)
+      } else setEventDragGhost(null)
+    },
+    []
+  )
+
+  const handleSavedMealWeekDragEnd = useCallback(async () => {
+    const meal = savedMealForDragRef.current
+    if (!meal) {
+      setSavedMealWeekDragging(false)
+      setSavedMealDragAt(null)
+      setWeekDragActive(false)
+      return
+    }
+    if (savedMealDragEndLock.current) return
+    savedMealDragEndLock.current = true
+    const { ax, ay } = lastSavedDragXY.current
+    await new Promise((r) => setTimeout(r, 100))
+    const target = weekGridRef.current?.resolveSavedMealDrop(ax, ay)
+    if (target) {
+      await addEvent({
+        date: target.dateKey,
+        mealSlot: target.slot,
+        savedMealId: meal.id,
+        title: meal.title,
+        baseId: meal.baseId,
+        proteinId: meal.proteinId,
+        vegetableId: meal.vegetableId,
+        method: meal.method
+      })
+    }
+    savedMealForDragRef.current = null
+    setSavedMealWeekDragging(false)
+    setSavedMealDragAt(null)
+    setWeekDragActive(false)
+    savedMealDragEndLock.current = false
+  }, [addEvent])
 
   const handleRemoveSavedMeal = (meal: SavedMeal) => {
     Alert.alert(
@@ -348,7 +638,21 @@ export default function CalendarScreen () {
     setSelectedDate(null)
   }
 
+  const handlePlannerWeekDelete = useCallback(
+    async (eventId: string) => {
+      const ev = events.find(e => e.id === eventId)
+      if (ev?.notificationId) await cancelScheduledNotification(ev.notificationId)
+      await deleteEvent(eventId)
+    },
+    [events, deleteEvent]
+  )
+
   const dayDetailEvents = selectedDate ? getEventsForDate(selectedDate) : []
+
+  const eventGhostPalette =
+    !savedMealWeekDragging && eventDragGhost
+      ? slotDragGhostColors(eventDragGhost.slot, colors.primary)
+      : null
 
   if (!hydrated) {
     return (
@@ -360,7 +664,13 @@ export default function CalendarScreen () {
 
   return (
     <SwipeTabsContainer tabIndex={CALENDAR_TAB_INDEX}>
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <View
+        ref={calendarRootRef}
+        style={[styles.container, { backgroundColor: colors.background }]}
+        onLayout={() => {
+          syncDragLayerOrigin()
+        }}
+      >
         <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
           <Animated.View style={[styles.headerContent, headerSlideStyle]}>
             <CalendarIcon size={32} color={colors.primary} />
@@ -368,30 +678,90 @@ export default function CalendarScreen () {
             <Text style={[styles.subtitle, { color: colors.textMuted }]}>Your upcoming meal schedule</Text>
           </Animated.View>
         </View>
+        <View style={[styles.viewToggleRow, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+          <TouchableOpacity
+            style={[
+              styles.viewToggleBtn,
+              calendarView === 'month' && styles.viewToggleBtnActive
+            ]}
+            onPress={() => setCalendarView('month')}
+            activeOpacity={0.8}
+          >
+            <Text
+              style={[
+                styles.viewToggleText,
+                calendarView === 'month' && [styles.viewToggleTextActive, { color: colors.primary }]
+              ]}
+            >
+              Month
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.viewToggleBtn,
+              calendarView === 'week' && styles.viewToggleBtnActive
+            ]}
+            onPress={() => setCalendarView('week')}
+            activeOpacity={0.8}
+          >
+            <Text
+              style={[
+                styles.viewToggleText,
+                calendarView === 'week' && [styles.viewToggleTextActive, { color: colors.primary }]
+              ]}
+            >
+              Week
+            </Text>
+          </TouchableOpacity>
+        </View>
 
-      <View style={[styles.calendarControls, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={previousMonth} style={styles.navButton}>
-          <ChevronLeft size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.monthYear, { color: colors.text }]}>
-          {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
-        </Text>
-        <TouchableOpacity onPress={nextMonth} style={styles.navButton}>
-          <ChevronRight size={24} color={colors.text} />
-        </TouchableOpacity>
-      </View>
+        {calendarView === 'month' && (
+          <>
+            <View style={[styles.calendarControls, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
+              <TouchableOpacity onPress={previousMonth} style={styles.navButton}>
+                <ChevronLeft size={24} color={colors.text} />
+              </TouchableOpacity>
+              <Text style={[styles.monthYear, { color: colors.text }]}>
+                {monthNames[currentDate.getMonth()]} {currentDate.getFullYear()}
+              </Text>
+              <TouchableOpacity onPress={nextMonth} style={styles.navButton}>
+                <ChevronRight size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
 
-      <View style={[styles.weekDays, { backgroundColor: colors.card }]}>
-        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
-          <View key={day} style={styles.weekDayCell}>
-            <Text style={[styles.weekDayText, { color: colors.textMuted }]}>{day}</Text>
-          </View>
-        ))}
-      </View>
+            <View style={[styles.weekDays, { backgroundColor: colors.card }]}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+                <View key={day} style={styles.weekDayCell}>
+                  <Text style={[styles.weekDayText, { color: colors.textMuted }]}>{day}</Text>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
 
       <ScrollView
+        ref={weekMainScrollRef}
+        scrollEnabled={!weekDragActive || calendarView === 'week'}
         contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}>
+        showsVerticalScrollIndicator={false}
+        scrollEventThrottle={16}
+        onScroll={(e) => {
+          weekScrollYRef.current = e.nativeEvent.contentOffset.y
+        }}
+        onContentSizeChange={(_, h) => {
+          weekContentHeightRef.current = h
+        }}
+        onLayout={(e) => {
+          weekViewportHeightRef.current = e.nativeEvent.layout.height
+          requestAnimationFrame(() => {
+            ;(weekMainScrollRef.current as unknown as View | null)?.measureInWindow(
+              (x: number, y: number, w: number, h: number) => {
+                scrollViewportWinRef.current = { top: y, bottom: y + h }
+              }
+            )
+          })
+        }}
+      >
         <Animated.View
           style={{
             opacity: sectionSlide1,
@@ -405,41 +775,133 @@ export default function CalendarScreen () {
             ]
           }}
         >
-          <View style={[styles.calendarGrid, { backgroundColor: colors.card, height: CALENDAR_GRID_HEIGHT }]}>
-            {calendarRows.map((rowCells, rowIndex) => (
-              <View key={rowIndex} style={styles.calendarGridRow}>
-                {rowCells.map((dayOrNull, colIndex) => {
-                  if (dayOrNull === null) {
+          {calendarView === 'month' && (
+            <View style={[styles.calendarGrid, { backgroundColor: colors.card, height: CALENDAR_GRID_HEIGHT }]}>
+              {calendarRows.map((rowCells, rowIndex) => (
+                <View key={rowIndex} style={styles.calendarGridRow}>
+                  {rowCells.map((dayOrNull, colIndex) => {
+                    if (dayOrNull === null) {
+                      return (
+                        <View key={`e-${rowIndex}-${colIndex}`} style={styles.dayCellFill} />
+                      )
+                    }
+                    const day = dayOrNull
+                    const isToday =
+                      day === new Date().getDate() &&
+                      currentDate.getMonth() === new Date().getMonth() &&
+                      currentDate.getFullYear() === new Date().getFullYear()
+                    const hasEvents = hasEventsOnDay(currentDate.getFullYear(), currentDate.getMonth(), day)
                     return (
-                      <View key={`e-${rowIndex}-${colIndex}`} style={styles.dayCellFill} />
+                      <View key={day} style={styles.dayCellFill}>
+                        <TouchableOpacity
+                          style={[
+                            styles.dayCellInner,
+                            isToday && styles.todayCell,
+                            hasEvents && styles.dayWithEvents
+                          ]}
+                          onPress={() => handleDayPress(currentDate.getFullYear(), currentDate.getMonth(), day)}
+                        >
+                          <Text style={[styles.dayText, { color: colors.text }, isToday && styles.todayText]}>{day}</Text>
+                          {hasEvents && <View style={styles.dot} />}
+                        </TouchableOpacity>
+                      </View>
                     )
-                  }
-                  const day = dayOrNull
-                  const isToday =
-                    day === new Date().getDate() &&
-                    currentDate.getMonth() === new Date().getMonth() &&
-                    currentDate.getFullYear() === new Date().getFullYear()
-                  const hasEvents = hasEventsOnDay(currentDate.getFullYear(), currentDate.getMonth(), day)
-                  return (
-                    <View key={day} style={styles.dayCellFill}>
-                      <TouchableOpacity
-                        style={[
-                          styles.dayCellInner,
-                          isToday && styles.todayCell,
-                          hasEvents && styles.dayWithEvents
-                        ]}
-                        onPress={() => handleDayPress(currentDate.getFullYear(), currentDate.getMonth(), day)}
-                      >
-                        <Text style={[styles.dayText, { color: colors.text }, isToday && styles.todayText]}>{day}</Text>
-                        {hasEvents && <View style={styles.dot} />}
-                      </TouchableOpacity>
-                    </View>
-                  )
-                })}
-              </View>
-            ))}
-          </View>
+                  })}
+                </View>
+              ))}
+            </View>
+          )}
         </Animated.View>
+
+        {calendarView === 'week' && (
+          <View style={styles.weekGridSection}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Week planner</Text>
+            <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+              Long-press a meal to rearrange the week (all meals wiggle). Tap empty space to finish. Tap a meal for
+              details; tap the day column to manage.
+            </Text>
+            <View style={[styles.weekRangeToggleWrap, { backgroundColor: colors.card, borderColor: colors.border + '66' }]}>
+              <TouchableOpacity
+                style={[
+                  styles.weekRangeToggleBtn,
+                  weekRangeMode === 'monday_to_sunday' && [
+                    styles.weekRangeToggleBtnActive,
+                    { backgroundColor: colors.primary + '1f' }
+                  ]
+                ]}
+                onPress={() => setWeekRangeMode('monday_to_sunday')}
+                activeOpacity={0.85}
+              >
+                <Text
+                  style={[
+                    styles.weekRangeToggleText,
+                    { color: colors.textMuted },
+                    weekRangeMode === 'monday_to_sunday' && { color: colors.primary }
+                  ]}
+                >
+                  Mon to Sun
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.weekRangeToggleBtn,
+                  weekRangeMode === 'yesterday_to_plus_five' && [
+                    styles.weekRangeToggleBtnActive,
+                    { backgroundColor: colors.primary + '1f' }
+                  ]
+                ]}
+                onPress={() => setWeekRangeMode('yesterday_to_plus_five')}
+                activeOpacity={0.85}
+              >
+                <Text
+                  style={[
+                    styles.weekRangeToggleText,
+                    { color: colors.textMuted },
+                    weekRangeMode === 'yesterday_to_plus_five' && { color: colors.primary }
+                  ]}
+                >
+                  Yesterday + 6 days
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <WeekTimeGrid
+              ref={weekGridRef}
+              weekStart={weekStartDate}
+              events={weekEvents}
+              resolveMealColor={resolveEventColor}
+              savedMealDragging={savedMealWeekDragging}
+              savedMealDragAt={savedMealDragAt}
+              onDeletePlannerEvent={handlePlannerWeekDelete}
+              onDragActiveChange={setWeekDragActive}
+              onDragScreenMove={(_ax, ay) => {
+                lastDragAyRef.current = ay
+              }}
+              onDragFinger={handleEventDragFinger}
+              onEventDragBegan={() => {
+                syncDragLayerOrigin()
+                requestAnimationFrame(() => {
+                  ;(weekMainScrollRef.current as unknown as View | null)?.measureInWindow(
+                    (x: number, y: number, w: number, h: number) => {
+                      scrollViewportWinRef.current = { top: y, bottom: y + h }
+                    }
+                  )
+                })
+              }}
+              onOpenDay={(dk) => setSelectedDate(dk)}
+              onOpenMeal={(ev) => setWeekPlannerMeal(calendarEventToSavedMeal(ev, getSavedMeal))}
+              onMoveEventDay={async (eventId, toDateKey, toSlot) => {
+                const ev = events.find(e => e.id === eventId)
+                if (!ev) return
+                await moveEvent(eventId, toDateKey, toSlot)
+              }}
+              onCopyEventToDay={async (eventId, toDateKey) => {
+                const ev = events.find(e => e.id === eventId)
+                if (!ev) return
+                await copyEvent(eventId, toDateKey, ev.mealSlot)
+              }}
+            />
+          </View>
+        )}
 
         <Animated.View
           style={[
@@ -459,7 +921,9 @@ export default function CalendarScreen () {
         >
           <Text style={[styles.sectionTitle, { color: colors.text }]}>Saved meals</Text>
           <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
-            Tap a meal to add it to the calendar
+            {calendarView === 'week'
+              ? 'Long-press a meal, drag to a day: left = breakfast, middle = lunch, right = dinner. Or tap to pick a date.'
+              : 'Tap a meal to add it to the calendar'}
           </Text>
           {savedMeals.length === 0 ? (
             <View style={styles.emptyStateWrap}>
@@ -516,22 +980,40 @@ export default function CalendarScreen () {
           ) : (
             <ScrollView
               horizontal
+              scrollEnabled={calendarView !== 'week' || !weekDragActive}
               showsHorizontalScrollIndicator={false}
               contentContainerStyle={styles.savedMealsList}>
-              {savedMeals.map((meal) => (
-                <TouchableOpacity
-                  key={meal.id}
-                  style={[styles.savedMealChip, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}
-                  onPress={() => handleAddFromSavedMeal(meal)}
-                  activeOpacity={0.7}>
-                  <View style={styles.savedMealChipContent}>
-                    <Plus size={18} color={colors.primary} />
-                    <Text style={[styles.savedMealChipText, { color: colors.text }]} numberOfLines={2}>
-                      {meal.title || 'Untitled meal'}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
+              {savedMeals.map((meal) =>
+                calendarView === 'week' ? (
+                  <SavedMealWeekDragChip
+                    key={meal.id}
+                    meal={meal}
+                    colors={{
+                      card: colors.card,
+                      cardBorder: colors.cardBorder,
+                      primary: colors.primary,
+                      text: colors.text
+                    }}
+                    onTap={() => handleAddFromSavedMeal(meal)}
+                    onDragStart={handleSavedMealWeekDragStart}
+                    onDragMove={handleSavedMealWeekDragMove}
+                    onDragEnd={handleSavedMealWeekDragEnd}
+                  />
+                ) : (
+                  <TouchableOpacity
+                    key={meal.id}
+                    style={[styles.savedMealChip, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}
+                    onPress={() => handleAddFromSavedMeal(meal)}
+                    activeOpacity={0.7}>
+                    <View style={styles.savedMealChipContent}>
+                      <Plus size={18} color={colors.primary} />
+                      <Text style={[styles.savedMealChipText, { color: colors.text }]} numberOfLines={2}>
+                        {meal.title || 'Untitled meal'}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                )
+              )}
             </ScrollView>
           )}
         </Animated.View>
@@ -578,6 +1060,78 @@ export default function CalendarScreen () {
         </Animated.View>
         )}
       </ScrollView>
+
+      {calendarView === 'week' &&
+        weekDragActive &&
+        ((savedMealWeekDragging && savedMealDragAt) || eventDragGhost) && (
+          <View style={styles.dragGhostLayer} pointerEvents="none">
+            {savedMealWeekDragging && savedMealDragAt && savedMealForDragRef.current && (
+              <View
+                style={[
+                  styles.dragGhost,
+                  {
+                    left:
+                      savedMealDragAt.ax - dragLayerOrigin.x - DRAG_GHOST_W / 2,
+                    top:
+                      savedMealDragAt.ay - dragLayerOrigin.y - DRAG_GHOST_OFFSET_Y,
+                    width: DRAG_GHOST_W,
+                    backgroundColor: colors.card,
+                    borderColor: colors.primary + '99'
+                  },
+                  styles.dragGhostShadow
+                ]}
+              >
+                <Plus size={18} color={colors.primary} />
+                <Text
+                  style={[styles.dragGhostTitle, { color: colors.text }]}
+                  numberOfLines={2}
+                >
+                  {savedMealForDragRef.current.title || 'Meal'}
+                </Text>
+              </View>
+            )}
+            {!savedMealWeekDragging && eventDragGhost && eventGhostPalette && (
+              <View
+                style={[
+                  styles.dragGhost,
+                  styles.dragGhostEventCol,
+                  {
+                    left:
+                      eventDragGhost.ax - dragLayerOrigin.x - DRAG_GHOST_W / 2,
+                    top:
+                      eventDragGhost.ay - dragLayerOrigin.y - DRAG_GHOST_OFFSET_Y,
+                    width: DRAG_GHOST_W,
+                    backgroundColor: eventGhostPalette.bg,
+                    borderColor: eventGhostPalette.accent + '88'
+                  },
+                  styles.dragGhostShadow
+                ]}
+              >
+                <Text
+                  style={[styles.dragGhostSlot, { color: eventGhostPalette.accent }]}
+                >
+                  {eventDragGhost.slot === 'breakfast'
+                    ? 'Breakfast'
+                    : eventDragGhost.slot === 'lunch'
+                      ? 'Lunch'
+                      : 'Dinner'}
+                </Text>
+                <Text
+                  style={[styles.dragGhostTitle, { color: colors.text }]}
+                  numberOfLines={2}
+                >
+                  {eventDragGhost.title || 'Meal'}
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+
+      <WeekPlannerMealModal
+        visible={weekPlannerMeal != null}
+        meal={weekPlannerMeal}
+        onClose={() => setWeekPlannerMeal(null)}
+      />
 
       <DayDetailModal
         visible={selectedDate != null}
@@ -698,6 +1252,31 @@ const styles = StyleSheet.create({
     color: '#64748b',
     marginTop: 2
   },
+  viewToggleRow: {
+    flexDirection: 'row',
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0'
+  },
+  viewToggleBtn: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10
+  },
+  viewToggleBtnActive: {
+    borderBottomWidth: 2,
+    borderBottomColor: '#22c55e'
+  },
+  viewToggleText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#64748b'
+  },
+  viewToggleTextActive: {
+    fontWeight: '700',
+    color: '#22c55e'
+  },
   calendarControls: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -797,6 +1376,86 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: '#22c55e'
   },
+  weekViewSection: {
+    marginBottom: 24
+  },
+  weekGridSection: {
+    marginBottom: 24
+  },
+  weekRangeToggleWrap: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 4,
+    flexDirection: 'row',
+    gap: 6,
+    marginBottom: 10
+  },
+  weekRangeToggleBtn: {
+    flex: 1,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  weekRangeToggleBtnActive: {
+    borderWidth: 1,
+    borderColor: 'transparent'
+  },
+  weekRangeToggleText: {
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center'
+  },
+  weekDayCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 10,
+    overflow: 'hidden'
+  },
+  weekDayHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 14
+  },
+  weekDayLabel: {
+    fontSize: 16,
+    fontWeight: '600'
+  },
+  weekDayLabelToday: {
+    fontWeight: '700'
+  },
+  weekDayDate: {
+    fontSize: 13
+  },
+  weekDayEmpty: {
+    fontSize: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14
+  },
+  weekDayMeals: {
+    paddingHorizontal: 14,
+    paddingBottom: 12
+  },
+  weekDayMealRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    borderTopWidth: 1
+  },
+  weekDaySlot: {
+    fontSize: 12,
+    fontWeight: '600',
+    width: 72
+  },
+  weekDayMealTitle: {
+    fontSize: 14,
+    flex: 1,
+    minWidth: 0
+  },
   mealsSection: {
     marginTop: 8
   },
@@ -894,5 +1553,46 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#ffffff',
     textAlign: 'center'
+  },
+  dragGhostLayer: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 500,
+    elevation: 0
+  },
+  dragGhost: {
+    position: 'absolute',
+    borderRadius: 14,
+    borderWidth: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  dragGhostEventCol: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 4
+  },
+  dragGhostSlot: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+    textTransform: 'uppercase'
+  },
+  dragGhostTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 17,
+    flex: 1,
+    minWidth: 0
+  },
+  dragGhostShadow: {
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.22,
+    shadowRadius: 14,
+    elevation: 16
   }
 })

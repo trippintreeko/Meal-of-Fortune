@@ -7,6 +7,7 @@ import {
   TouchableOpacity
 } from 'react-native'
 import { X } from 'lucide-react-native'
+import { useThemeColors } from '@/hooks/useTheme'
 import type { SavedMeal, MealSlot } from '@/types/calendar'
 import { dateKey, addDaysToDateKey } from '@/types/calendar'
 import DateWheelPicker from './DateWheelPicker'
@@ -26,6 +27,7 @@ export default function BatchAddToCalendarModal ({
   onClose,
   onConfirm
 }: BatchAddToCalendarModalProps) {
+  const colors = useThemeColors()
   const today = new Date()
   const [startDate, setStartDate] = useState<string>(dateKey(today))
 
@@ -49,28 +51,35 @@ export default function BatchAddToCalendarModal ({
       transparent
       onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
           <View style={styles.header}>
-            <Text style={styles.title}>Add to calendar</Text>
+            <Text style={[styles.title, { color: colors.text }]}>Add to calendar</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-              <X size={24} color="#64748b" />
+              <X size={24} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
-          <Text style={styles.subtitle}>
+          <Text style={[styles.subtitle, { color: colors.textMuted }]}>
             Add {selectedMeals.length} meal{selectedMeals.length === 1 ? '' : 's'} starting from:
           </Text>
-          <Text style={styles.label}>Start date</Text>
+          <Text style={[styles.label, { color: colors.text }]}>Start date</Text>
           <DateWheelPicker
             value={startDate}
             onChange={setStartDate}
             minYear={today.getFullYear()}
             maxYear={today.getFullYear() + 1}
+            textColor={colors.text}
+            centerHighlightBackground={`${colors.primary}26`}
           />
-          <Text style={styles.hint}>
+          <Text style={[styles.hint, { color: colors.placeholder }]}>
             Meals will be added as breakfast, lunch, dinner in order. Extra meals go to the next day.
           </Text>
-          <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm}>
-            <Text style={styles.confirmBtnText}>Add {selectedMeals.length} to calendar</Text>
+          <TouchableOpacity
+            style={[styles.confirmBtn, { backgroundColor: colors.primary }]}
+            onPress={handleConfirm}
+          >
+            <Text style={[styles.confirmBtnText, { color: colors.primaryText }]}>
+              Add {selectedMeals.length} to calendar
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -85,9 +94,9 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end'
   },
   sheet: {
-    backgroundColor: '#ffffff',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
+    borderTopWidth: StyleSheet.hairlineWidth,
     padding: 20,
     paddingBottom: 36
   },
@@ -99,35 +108,29 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#1e293b'
+    fontWeight: '700'
   },
   closeBtn: { padding: 4 },
   subtitle: {
     fontSize: 15,
-    color: '#64748b',
     marginBottom: 16
   },
   label: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#1e293b',
     marginBottom: 10
   },
   hint: {
     fontSize: 12,
-    color: '#94a3b8',
     marginBottom: 20
   },
   confirmBtn: {
-    backgroundColor: '#22c55e',
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center'
   },
   confirmBtnText: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#ffffff'
+    fontWeight: '700'
   }
 })

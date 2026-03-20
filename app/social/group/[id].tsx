@@ -3,11 +3,13 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useFocusEffect } from '@react-navigation/native'
 import { Users, Play, ClipboardList } from 'lucide-react-native'
 import { useThemeColors } from '@/hooks/useTheme'
 import { useSocialAuth } from '@/hooks/useSocialAuth'
 import { supabase } from '@/lib/supabase'
-import type { MealGroup, GroupMember } from '@/types/social'
+import { getDisplayUsername } from '@/lib/username-display'
+import type { MealGroup, GroupMember, GroupJoinRequest } from '@/types/social'
 import StartVoteModal from '@/components/social/voting/StartVoteModal'
 
 /* Voting History Calendar: tabs and GroupVotingHistory are disabled. See docs/VOTING-HISTORY-CALENDAR-CHANGES.md.
@@ -20,7 +22,9 @@ export default function GroupDetailScreen () {
   const { profile, isAuthenticated } = useSocialAuth()
   const [group, setGroup] = useState<MealGroup | null>(null)
   const [members, setMembers] = useState<(GroupMember & { username?: string })[]>([])
+  const [pendingRequests, setPendingRequests] = useState<(GroupJoinRequest & { username?: string })[]>([])
   const [loading, setLoading] = useState(true)
+  const [respondingRequestId, setRespondingRequestId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [startVoteModalVisible, setStartVoteModalVisible] = useState(false)
   const [latestCompletedSessionId, setLatestCompletedSessionId] = useState<string | null>(null)
@@ -37,6 +41,7 @@ export default function GroupDetailScreen () {
       setError(rpcErr?.message ?? 'Could not load group')
       setGroup(null)
       setMembers([])
+      setPendingRequests([])
       setLatestCompletedSessionId(null)
       setActiveSessionDeadline(null)
       return
@@ -46,6 +51,7 @@ export default function GroupDetailScreen () {
       members: Array<{ id: string; group_id: string; user_id: string; role: string; joined_at: string; username: string | null }>
       latest_completed_session_id: string | null
       active_session_deadline: string | null
+      pending_requests?: Array<{ id: string; group_id: string; user_id: string; status: string; created_at: string; username: string | null }>
     }
     setGroup(detail.group)
     setLatestCompletedSessionId(detail.latest_completed_session_id ?? null)
@@ -57,12 +63,26 @@ export default function GroupDetailScreen () {
         username: (m.username ?? 'Unknown') as string
       })) as (GroupMember & { username?: string })[]
     )
+    setPendingRequests(
+      (detail.pending_requests ?? []).map((r) => ({
+        ...r,
+        status: r.status as GroupJoinRequest['status'],
+        username: (r.username ?? 'Unknown') as string
+      })) as (GroupJoinRequest & { username?: string })[]
+    )
   }, [id])
 
   useEffect(() => {
     if (!id || !isAuthenticated) return
     loadGroup()
   }, [id, isAuthenticated, loadGroup])
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!id || !isAuthenticated) return
+      loadGroup()
+    }, [id, isAuthenticated, loadGroup])
+  )
 
   useEffect(() => {
     if (!group?.active_voting_session || !activeSessionDeadline) return
@@ -96,12 +116,33 @@ export default function GroupDetailScreen () {
     return sessionId as string
   }
 
-  const handleVoteStarted = (sessionId: string) => {
-    setStartVoteModalVisible(false)
-    router.push({ pathname: '/social/session/[id]', params: { id: sessionId } })
-  }
+  const handleVoteStarted = useCallback(
+    async (sessionId: string) => {
+      setStartVoteModalVisible(false)
+      await loadGroup()
+      router.push({ pathname: '/social/session/[id]', params: { id: sessionId } })
+    },
+    [loadGroup, router]
+  )
 
   const isLeader = group?.created_by === profile?.id
+  const isAdmin = members.some((m) => m.user_id === profile?.id && m.role === 'admin')
+  const canManageRequests = isLeader || isAdmin
+
+  const handleRespondToJoinRequest = async (requestId: string, accept: boolean) => {
+    if (respondingRequestId) return
+    setRespondingRequestId(requestId)
+    const { error } = await supabase.rpc('respond_to_join_request', {
+      p_request_id: requestId,
+      p_accept: accept
+    })
+    setRespondingRequestId(null)
+    if (error) {
+      Alert.alert('Error', error.message)
+      return
+    }
+    loadGroup()
+  }
 
   const handleAssignLeader = (memberUsername: string, newLeaderUserId: string) => {
     Alert.alert(
@@ -157,7 +198,6 @@ export default function GroupDetailScreen () {
     )
   }
 
-  const isAdmin = members.some((m) => m.user_id === profile?.id && m.role === 'admin')
   const hasActiveSession = !!group.active_voting_session
 
   return (
@@ -171,13 +211,13 @@ export default function GroupDetailScreen () {
         {members.map((m) => (
           <View key={m.id} style={styles.memberRow}>
             <Users size={18} color={colors.textMuted} />
-            <Text style={[styles.memberName, { color: colors.text }]}>{m.username}</Text>
+            <Text style={[styles.memberName, { color: colors.text }]}>{getDisplayUsername(m.username)}</Text>
             {group.created_by === m.user_id ? <Text style={styles.leaderBadge}>Leader</Text> : null}
             {m.role === 'admin' && group.created_by !== m.user_id ? <Text style={[styles.role, { color: colors.primary }]}>Admin</Text> : null}
             {isLeader && m.user_id !== profile?.id && (
               <TouchableOpacity
                 style={[styles.makeLeaderBtn, { backgroundColor: colors.secondaryBg }]}
-                onPress={() => handleAssignLeader(m.username ?? 'this member', m.user_id)}
+                onPress={() => handleAssignLeader(getDisplayUsername(m.username) || 'this member', m.user_id)}
               >
                 <Text style={[styles.makeLeaderBtnText, { color: colors.textMuted }]}>Make leader</Text>
               </TouchableOpacity>
@@ -185,6 +225,35 @@ export default function GroupDetailScreen () {
           </View>
         ))}
       </View>
+      {canManageRequests && pendingRequests.length > 0 && (
+        <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
+          <Text style={[styles.sectionTitle, { color: colors.textMuted }]}>Pending join requests</Text>
+          {pendingRequests.map((req) => (
+            <View key={req.id} style={styles.pendingRequestRow}>
+              <Users size={18} color={colors.textMuted} />
+              <Text style={[styles.memberName, { color: colors.text }]}>{getDisplayUsername(req.username)}</Text>
+              <TouchableOpacity
+                style={[styles.pendingRequestBtn, { backgroundColor: colors.primary }]}
+                onPress={() => handleRespondToJoinRequest(req.id, true)}
+                disabled={!!respondingRequestId}
+              >
+                {respondingRequestId === req.id ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.pendingRequestBtnText}>Accept</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.pendingRequestBtn, styles.denyBtn, { backgroundColor: colors.destructive }]}
+                onPress={() => handleRespondToJoinRequest(req.id, false)}
+                disabled={!!respondingRequestId}
+              >
+                <Text style={styles.pendingRequestBtnText}>Deny</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+        </View>
+      )}
       {isAdmin && !hasActiveSession && (
         <TouchableOpacity style={[styles.button, { backgroundColor: colors.primary }]} onPress={() => setStartVoteModalVisible(true)}>
           <Play size={22} color="#fff" />
@@ -197,7 +266,6 @@ export default function GroupDetailScreen () {
         onClose={() => setStartVoteModalVisible(false)}
         onStarted={handleVoteStarted}
         startVotingSession={startVotingSession}
-        themeColors={colors}
       />
       {hasActiveSession && (
         <TouchableOpacity
@@ -241,7 +309,11 @@ const styles = StyleSheet.create({
   resultsButton: { backgroundColor: '#0ea5e9' },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   leaveButton: { marginTop: 8, padding: 16, alignItems: 'center' },
-  leaveButtonText: { fontSize: 15, color: '#dc2626', fontWeight: '600' }
+  leaveButtonText: { fontSize: 15, color: '#dc2626', fontWeight: '600' },
+  pendingRequestRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' },
+  pendingRequestBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 },
+  denyBtn: {},
+  pendingRequestBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' }
 })
 
 /* ========== VOTING HISTORY CALENDAR (DISABLED) – restore when re-enabling feature ==========

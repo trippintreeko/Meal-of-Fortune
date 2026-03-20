@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl } from 'react-native'
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, RefreshControl, Alert } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useFocusEffect } from '@react-navigation/native'
 import { Users, Plus, LogOut } from 'lucide-react-native'
@@ -88,7 +88,19 @@ export default function GroupsScreen () {
       <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <View style={styles.headerRow}>
           <Text style={[styles.title, { color: colors.text }]}>Meal groups</Text>
-          <TouchableOpacity onPress={() => signOut()} style={styles.signOut}>
+          <TouchableOpacity
+            onPress={() => {
+              Alert.alert(
+                'Sign out?',
+                'Are you sure you want to sign out?',
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Sign out', style: 'destructive', onPress: () => { void signOut() } }
+                ]
+              )
+            }}
+            style={styles.signOut}
+          >
             <LogOut size={22} color={colors.textMuted} />
           </TouchableOpacity>
         </View>

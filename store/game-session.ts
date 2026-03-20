@@ -7,7 +7,7 @@ type NavParams = {
   base: string
   protein: string
   vegetable: string
-  /** Comma-separated cooking method ids from round 3 (e.g. "bake,grill") */
+  /** Legacy: round 3 cooking methods (hidden). Keep empty to disable method filtering. */
   method: string
   seasonings: string
   garnishes: string
@@ -37,7 +37,7 @@ export const useGameSessionStore = create<GameSessionState>((set, get) => ({
   mealType: null,
   feeling: null,
   gameIds: [],
-  roundResults: [null, null, null],
+  roundResults: [null, null],
   gameAddedNotTodayIds: [],
 
   startSession (mealType: MealType) {
@@ -46,7 +46,7 @@ export const useGameSessionStore = create<GameSessionState>((set, get) => ({
       mealType,
       feeling: null,
       gameIds,
-      roundResults: [null, null, null],
+      roundResults: [null, null],
       gameAddedNotTodayIds: []
     })
   },
@@ -96,11 +96,7 @@ export const useGameSessionStore = create<GameSessionState>((set, get) => ({
     const allVegetables = [...new Set([...a.vegetableIds, ...b.vegetableIds])]
     const allSeasonings = [...new Set([...(a.seasoningIds ?? []), ...(b.seasoningIds ?? [])])]
     const allGarnishes = [...new Set([...(a.garnishIds ?? []), ...(b.garnishIds ?? [])])]
-    const r2 = roundResults[2]
-    const methodList = r2?.purpose === 'cooking_method' && 'methods' in r2 && Array.isArray(r2.methods) && r2.methods.length > 0
-      ? r2.methods
-      : (r2?.purpose === 'cooking_method' && 'method' in r2 && r2.method ? [r2.method] : ['grill'])
-    const method = methodList.join(',')
+    const method = ''
     if (allBases.length === 0 || allProteins.length === 0 || allVegetables.length === 0) return null
     return {
       base: allBases.join(','),
@@ -116,7 +112,7 @@ export const useGameSessionStore = create<GameSessionState>((set, get) => ({
   },
 
   reset () {
-    set({ mealType: null, feeling: null, gameIds: [], roundResults: [null, null, null], gameAddedNotTodayIds: [] })
+    set({ mealType: null, feeling: null, gameIds: [], roundResults: [null, null], gameAddedNotTodayIds: [] })
   }
 }))
 

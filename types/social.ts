@@ -26,6 +26,7 @@ export type NotificationType =
   | 'deadline_approaching'
   | 'result_ready'
   | 'group_invite'
+  | 'group_join_request'
 
 export type UserProfile = {
   id: string
@@ -82,6 +83,17 @@ export type GroupMember = {
   user_id: string
   role: GroupMemberRole
   joined_at: string
+}
+
+export type GroupJoinRequestStatus = 'pending' | 'accepted' | 'denied'
+
+export type GroupJoinRequest = {
+  id: string
+  group_id: string
+  user_id: string
+  status: GroupJoinRequestStatus
+  created_at: string
+  username?: string
 }
 
 export type VotingSession = {

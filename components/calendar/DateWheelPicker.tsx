@@ -19,6 +19,8 @@ type DateWheelPickerProps = {
   minYear?: number
   maxYear?: number
   textColor?: string
+  /** Selected row highlight (e.g. primary + alpha); defaults to light green tint */
+  centerHighlightBackground?: string
 }
 
 export default function DateWheelPicker ({
@@ -26,7 +28,8 @@ export default function DateWheelPicker ({
   onChange,
   minYear: minYearProp,
   maxYear: maxYearProp,
-  textColor
+  textColor,
+  centerHighlightBackground
 }: DateWheelPickerProps) {
   const rowTextStyle = textColor ? [styles.rowText, { color: textColor }] : styles.rowText
   const d = parseDateKey(value)
@@ -113,7 +116,13 @@ export default function DateWheelPicker ({
   return (
     <View style={styles.container}>
       <View style={styles.wheelContainer}>
-        <View style={styles.centerHighlight} pointerEvents="none" />
+        <View
+          style={[
+            styles.centerHighlight,
+            centerHighlightBackground != null && { backgroundColor: centerHighlightBackground }
+          ]}
+          pointerEvents="none"
+        />
         <View style={styles.wheelWrap}>
           <ScrollView
           ref={dayRef}

@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { View, Text, StyleSheet, Animated, PanResponder, Dimensions } from 'react-native'
+import { View, Text, StyleSheet, Animated, PanResponder, Dimensions, Image } from 'react-native'
 import { X, Heart } from 'lucide-react-native'
 import type { ThemeColors } from '@/lib/theme-colors'
 import { LIGHT_COLORS } from '@/lib/theme-colors'
@@ -11,6 +11,8 @@ export type MealCardDisplay = {
   title: string
   description?: string
   cookingMethod?: string
+  /** Spoonacular or gallery recipe image URL */
+  imageUrl?: string | null
 }
 
 type SwipeCardProps = {
@@ -107,13 +109,19 @@ export default function SwipeCard ({ cardDisplay, onSwipe, isTop, themeColors = 
         <Text style={[styles.nopeLabelText, { color: c.destructive }]}>NOPE</Text>
       </Animated.View>
 
-      <View style={[styles.imagePlaceholder, { backgroundColor: c.secondaryBg }]}>
-        <Text style={styles.imagePlaceholderEmoji}>🍽</Text>
+      <View style={[styles.imageSection, { backgroundColor: c.secondaryBg }]}>
+        {cardDisplay.imageUrl ? (
+          <Image source={{ uri: cardDisplay.imageUrl }} style={styles.cardImage} resizeMode="cover" />
+        ) : (
+          <View style={styles.imagePlaceholderInner}>
+            <Text style={styles.imagePlaceholderEmoji}>🍽</Text>
+          </View>
+        )}
       </View>
-      <View style={styles.mealInfo}>
-        <Text style={[styles.mealTitle, { color: c.text }]}>{cardDisplay.title}</Text>
+      <View style={[styles.mealInfo, { backgroundColor: c.card }]}>
+        <Text style={[styles.mealTitle, { color: c.text }]} numberOfLines={2}>{cardDisplay.title}</Text>
         {cardDisplay.description ? (
-          <Text style={[styles.mealDescription, { color: c.textMuted }]} numberOfLines={3}>{cardDisplay.description}</Text>
+          <Text style={[styles.mealDescription, { color: c.textMuted }]} numberOfLines={2}>{cardDisplay.description}</Text>
         ) : null}
         {cardDisplay.cookingMethod ? (
           <Text style={[styles.cookingMethod, { color: c.textMuted }]}>Cooking method: {cardDisplay.cookingMethod}</Text>
@@ -129,7 +137,7 @@ const styles = StyleSheet.create({
     width: SCREEN_WIDTH - 40,
     height: 500,
     borderRadius: 20,
-    padding: 24,
+    overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.2,
@@ -164,22 +172,33 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   nopeLabelText: { fontSize: 20, fontWeight: '700', marginTop: 4 },
-  imagePlaceholder: {
-    height: 140,
-    borderRadius: 12,
+  imageSection: {
+    flex: 1,
+    minHeight: 320,
+    overflow: 'hidden',
+  },
+  cardImage: {
+    width: '100%',
+    height: '100%',
+  },
+  imagePlaceholderInner: {
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
   },
-  imagePlaceholderEmoji: { fontSize: 56 },
-  mealInfo: { flex: 1, justifyContent: 'center' },
+  imagePlaceholderEmoji: { fontSize: 72 },
+  mealInfo: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    paddingBottom: 20,
+  },
   mealTitle: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: '700',
     textAlign: 'center',
-    marginBottom: 10,
+    marginBottom: 6,
     textTransform: 'capitalize',
   },
-  mealDescription: { fontSize: 15, textAlign: 'center', marginBottom: 8 },
-  cookingMethod: { fontSize: 14, textAlign: 'center', fontStyle: 'italic' },
+  mealDescription: { fontSize: 14, textAlign: 'center', marginBottom: 4 },
+  cookingMethod: { fontSize: 13, textAlign: 'center', fontStyle: 'italic' },
 });

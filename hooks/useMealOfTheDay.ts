@@ -16,6 +16,8 @@ export type MealOfTheDayItem = {
   description?: string
   /** Up to 3 pre-fetched image URLs for instant display */
   imageUrls?: string[]
+  /** When set, modal can load Spoonacular recipe image and link to recipe page */
+  spoonacular_recipe_id?: number | null
 }
 
 type Stored = {
@@ -26,7 +28,7 @@ type Stored = {
 async function fetchGalleryMeals (): Promise<MealOfTheDayItem[]> {
   const { data, error } = await supabase
     .from('gallery_meals')
-    .select('id, title, description, base_id, protein_id, vegetable_id, cooking_method, base_group, image_urls')
+    .select('id, title, description, base_id, protein_id, vegetable_id, cooking_method, base_group, image_urls, spoonacular_recipe_id')
     .order('sort_order')
   if (error || !data || data.length === 0) return []
   return (data as {
@@ -39,6 +41,7 @@ async function fetchGalleryMeals (): Promise<MealOfTheDayItem[]> {
     cooking_method: string | null
     base_group: string | null
     image_urls: string[] | null
+    spoonacular_recipe_id: number | null
   }[]).map((row) => ({
     id: row.id,
     title: row.title,
@@ -48,7 +51,8 @@ async function fetchGalleryMeals (): Promise<MealOfTheDayItem[]> {
     vegetable: row.vegetable_id ?? '',
     method: row.cooking_method ?? 'grilled',
     baseGroup: row.base_group ?? undefined,
-    imageUrls: Array.isArray(row.image_urls) ? row.image_urls : undefined
+    imageUrls: Array.isArray(row.image_urls) ? row.image_urls : undefined,
+    spoonacular_recipe_id: row.spoonacular_recipe_id ?? undefined
   }))
 }
 

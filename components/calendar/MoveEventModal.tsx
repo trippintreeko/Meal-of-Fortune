@@ -7,6 +7,7 @@ import {
   TouchableOpacity
 } from 'react-native'
 import { X, Coffee, Sun, Moon } from 'lucide-react-native'
+import { useThemeColors } from '@/hooks/useTheme'
 import type { MealSlot } from '@/types/calendar'
 import { dateKey } from '@/types/calendar'
 import DateWheelPicker from './DateWheelPicker'
@@ -30,6 +31,7 @@ export default function MoveEventModal ({
   onClose,
   onConfirm
 }: MoveEventModalProps) {
+  const colors = useThemeColors()
   const today = new Date()
   const [selectedDate, setSelectedDate] = useState<string>(currentDate)
   const [selectedSlot, setSelectedSlot] = useState<MealSlot>('lunch')
@@ -50,36 +52,46 @@ export default function MoveEventModal ({
       transparent
       onRequestClose={onClose}>
       <View style={styles.overlay}>
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, { backgroundColor: colors.card, borderTopColor: colors.border }]}>
           <View style={styles.header}>
-            <Text style={styles.title}>Move to</Text>
+            <Text style={[styles.title, { color: colors.text }]}>Move to</Text>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-              <X size={24} color="#64748b" />
+              <X size={24} color={colors.textMuted} />
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.label}>Date</Text>
+          <Text style={[styles.label, { color: colors.text }]}>Date</Text>
           <DateWheelPicker
             value={selectedDate}
             onChange={setSelectedDate}
             minYear={today.getFullYear()}
             maxYear={today.getFullYear() + 1}
+            textColor={colors.text}
+            centerHighlightBackground={`${colors.primary}26`}
           />
 
-          <Text style={styles.label}>Meal</Text>
+          <Text style={[styles.label, { color: colors.text }]}>Meal</Text>
           <View style={styles.slots}>
             {SLOTS.map(({ id, label, Icon }) => {
               const isSelected = selectedSlot === id
               return (
                 <TouchableOpacity
                   key={id}
-                  style={[styles.slotBtn, isSelected && styles.slotBtnSelected]}
+                  style={[
+                    styles.slotBtn,
+                    { backgroundColor: colors.secondaryBg },
+                    isSelected && { backgroundColor: colors.primary }
+                  ]}
                   onPress={() => setSelectedSlot(id)}>
-                  <Icon size={22} color={isSelected ? '#ffffff' : '#64748b'} />
+                  <Icon
+                    size={22}
+                    color={isSelected ? colors.primaryText : colors.textMuted}
+                  />
                   <Text
                     style={[
                       styles.slotText,
-                      isSelected && styles.slotTextSelected
+                      { color: colors.textMuted },
+                      isSelected && { color: colors.primaryText }
                     ]}>
                     {label}
                   </Text>
@@ -88,8 +100,11 @@ export default function MoveEventModal ({
             })}
           </View>
 
-          <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm}>
-            <Text style={styles.confirmBtnText}>Move</Text>
+          <TouchableOpacity
+            style={[styles.confirmBtn, { backgroundColor: colors.primary }]}
+            onPress={handleConfirm}
+          >
+            <Text style={[styles.confirmBtnText, { color: colors.primaryText }]}>Move</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -104,9 +119,9 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end'
   },
   sheet: {
-    backgroundColor: '#ffffff',
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
+    borderTopWidth: StyleSheet.hairlineWidth,
     padding: 20,
     paddingBottom: 36
   },
@@ -118,14 +133,12 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 20,
-    fontWeight: '700',
-    color: '#1e293b'
+    fontWeight: '700'
   },
   closeBtn: { padding: 4 },
   label: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#1e293b',
     marginBottom: 10
   },
   slots: {
@@ -140,29 +153,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 6,
     paddingVertical: 12,
-    borderRadius: 12,
-    backgroundColor: '#f1f5f9'
-  },
-  slotBtnSelected: {
-    backgroundColor: '#22c55e'
+    borderRadius: 12
   },
   slotText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#64748b'
-  },
-  slotTextSelected: {
-    color: '#ffffff'
+    fontWeight: '600'
   },
   confirmBtn: {
-    backgroundColor: '#22c55e',
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center'
   },
   confirmBtnText: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#ffffff'
+    fontWeight: '700'
   }
 })

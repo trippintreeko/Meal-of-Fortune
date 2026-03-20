@@ -14,8 +14,7 @@ import {
 import type { RoundGameProps } from '@/lib/game-registry'
 import type { RoundResult } from '@/types/game-session'
 import { supabase } from '@/lib/supabase'
-import { getFoodAsset, filterSpawnableFoodItems } from '@/lib/food-asset-mapping'
-import { getFoodAssetSource } from '@/lib/food-asset-registry'
+import { useFoodPreferencesStore } from '@/store/food-preferences-store'
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window')
 const COLS = 5
@@ -33,13 +32,10 @@ const DOUBLE_SPAWN_CHANCE = 0.65
 const TICK_MS = 50
 const MIN_VERTICAL_GAP = FOOD_RADIUS * 4
 
-const FALLBACK_BASE_ID = '11111111-1111-1111-1111-111111111101'
-const FALLBACK_PROTEIN_ID = '22222222-2222-2222-2222-222222222201'
-const FALLBACK_VEG_ID = '33333333-3333-3333-3333-333333333301'
-
 type FloatingFood = {
   id: string
   foodId: string
+  imageUrl: string | null
   name: string
   column: number
   y: number
@@ -52,7 +48,9 @@ export default function RiverNetRound ({
   mealType,
   onComplete
 }: RoundGameProps) {
-  const [foodPool, setFoodPool] = useState<{ id: string; name: string; category?: string }[]>([])
+  const dislikeIds = useFoodPreferencesStore(s => s.dislikeIds)
+  const notTodayIds = useFoodPreferencesStore(s => s.notTodayIds)
+  const [foodPool, setFoodPool] = useState<{ id: string; name: string; imageUrl: string | null; category?: string }[]>([])
   const [foods, setFoods] = useState<FloatingFood[]>([])
   const [netColumn, setNetColumn] = useState(2)
   const [caughtIds, setCaughtIds] = useState<string[]>([])
@@ -83,6 +81,9 @@ export default function RiverNetRound ({
     const finalCaught = caughtIdsRef.current
     const pool = foodPoolRef.current
     const getCategory = (foodId: string) => pool.find(p => p.id === foodId)?.category ?? 'base'
+    const getFallbackIdFor = (cat: string) => {
+      return pool.find(p => p.category === cat)?.id ?? pool[0]?.id ?? ''
+    }
     const result: RoundResult =
       roundPurpose === 'all_ingredients'
         ? (() => {
@@ -93,9 +94,9 @@ export default function RiverNetRound ({
             const garnishIds = [...new Set(finalCaught.filter(id => getCategory(id) === 'garnish'))]
             return {
               purpose: 'all_ingredients' as const,
-              baseIds: baseIds.length > 0 ? baseIds : [FALLBACK_BASE_ID],
-              proteinIds: proteinIds.length > 0 ? proteinIds : [FALLBACK_PROTEIN_ID],
-              vegetableIds: vegetableIds.length > 0 ? vegetableIds : [FALLBACK_VEG_ID],
+              baseIds: baseIds.length > 0 ? baseIds : [getFallbackIdFor('base')],
+              proteinIds: proteinIds.length > 0 ? proteinIds : [getFallbackIdFor('protein')],
+              vegetableIds: vegetableIds.length > 0 ? vegetableIds : [getFallbackIdFor('vegetable')],
               seasoningIds,
               garnishIds
             }
@@ -103,73 +104,93 @@ export default function RiverNetRound ({
         : roundPurpose === 'base'
           ? {
               purpose: 'base',
-              baseIds: finalCaught.length > 0 ? finalCaught : [FALLBACK_BASE_ID]
+              baseIds: finalCaught.length > 0 ? finalCaught : [getFallbackIdFor('base')]
             }
           : roundPurpose === 'protein_vegetable'
-            ? {
-                purpose: 'protein_vegetable',
-                proteinIds: [FALLBACK_PROTEIN_ID],
-                vegetableIds: [FALLBACK_VEG_ID]
-              }
+            ? (() => {
+                const proteinIds = [...new Set(finalCaught.filter(id => getCategory(id) === 'protein'))]
+                const vegetableIds = [...new Set(finalCaught.filter(id => getCategory(id) === 'vegetable'))]
+                return {
+                  purpose: 'protein_vegetable' as const,
+                  proteinIds: proteinIds.length > 0 ? proteinIds : [getFallbackIdFor('protein')],
+                  vegetableIds: vegetableIds.length > 0 ? vegetableIds : [getFallbackIdFor('vegetable')]
+                }
+              })()
             : { purpose: 'cooking_method', method: 'grilled' }
     setTimeout(() => onComplete(result), 0)
   }, [roundPurpose, onComplete])
 
   useEffect(() => {
-    if (roundPurpose === 'all_ingredients') {
-      let cancelled = false
-      Promise.all([
-        supabase.from('food_items').select('id, name, category').eq('category', 'base').order('name'),
-        supabase.from('food_items').select('id, name, category').eq('category', 'protein').order('name'),
-        supabase.from('food_items').select('id, name, category').eq('category', 'vegetable').order('name'),
-        supabase.from('food_items').select('id, name, category').eq('category', 'seasoning').order('name'),
-        supabase.from('food_items').select('id, name, category').eq('category', 'garnish').order('name')
-      ]).then(([b, p, v, s, g]) => {
-        if (cancelled) return
-        const list: { id: string; name: string; category: string }[] = []
-        if (b.data?.length) list.push(...b.data.map(r => ({ id: r.id, name: r.name, category: r.category || 'base' })))
-        if (p.data?.length) list.push(...p.data.map(r => ({ id: r.id, name: r.name, category: r.category || 'protein' })))
-        if (v.data?.length) list.push(...v.data.map(r => ({ id: r.id, name: r.name, category: r.category || 'vegetable' })))
-        if (s.data?.length) list.push(...s.data.map(r => ({ id: r.id, name: r.name, category: r.category || 'seasoning' })))
-        if (g.data?.length) list.push(...g.data.map(r => ({ id: r.id, name: r.name, category: r.category || 'garnish' })))
-        if (list.length === 0) list.push({ id: FALLBACK_BASE_ID, name: 'Rice', category: 'base' }, { id: FALLBACK_PROTEIN_ID, name: 'Chicken', category: 'protein' }, { id: FALLBACK_VEG_ID, name: 'Broccoli', category: 'vegetable' })
-        const spawnable = filterSpawnableFoodItems(list)
-        setFoodPool(spawnable.length > 0 ? spawnable : list)
-        setReady(true)
-      })
-      return () => { cancelled = true }
-    }
-    if (roundPurpose !== 'base') {
-      setReady(true)
-      setGameOver(true)
-      const result: RoundResult =
-        roundPurpose === 'protein_vegetable'
-          ? {
-              purpose: 'protein_vegetable',
-              proteinIds: [FALLBACK_PROTEIN_ID],
-              vegetableIds: [FALLBACK_VEG_ID]
-            }
-          : { purpose: 'cooking_method', method: 'grilled' }
-      setTimeout(() => onComplete(result), 0)
-      return
-    }
     let cancelled = false
-    supabase
-      .from('food_items')
-      .select('id, name')
-      .eq('category', 'base')
-      .order('name')
-      .then(({ data, error }) => {
-        if (cancelled) return
-        if (error || !data?.length) {
-          setFoodPool([{ id: FALLBACK_BASE_ID, name: 'Rice' }])
-        } else {
-          setFoodPool(data.map((r) => ({ id: r.id, name: r.name })))
-        }
+    void (async () => {
+      if (roundPurpose === 'cooking_method') {
         setReady(true)
-      })
+        setGameOver(true)
+        const result: RoundResult = { purpose: 'cooking_method', method: 'grilled' }
+        setTimeout(() => onComplete(result), 0)
+        return
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from('ingredient_assets')
+          .select('spoonacular_ingredient_id, name, image_url')
+          .order('name')
+        if (cancelled) return
+
+        if (error || !data?.length) {
+          setFoodPool([])
+          setReady(true)
+          return
+        }
+
+        const avoidIngredientIds = new Set([...dislikeIds, ...notTodayIds])
+
+        if (roundPurpose === 'all_ingredients') {
+          const catOrder = ['base', 'protein', 'vegetable', 'seasoning', 'garnish'] as const
+          const list = (data ?? []).map((r, idx) => ({
+            id: String(r.spoonacular_ingredient_id),
+            name: r.name,
+            imageUrl: r.image_url ?? null,
+            category: catOrder[idx % catOrder.length]
+          }))
+          const filtered = list.filter((it) => !avoidIngredientIds.has(it.id))
+          setFoodPool(filtered)
+          setReady(true)
+          return
+        }
+
+        if (roundPurpose === 'protein_vegetable') {
+          const list = (data ?? []).map((r, idx) => ({
+            id: String(r.spoonacular_ingredient_id),
+            name: r.name,
+            imageUrl: r.image_url ?? null,
+            category: idx % 2 === 0 ? 'protein' : 'vegetable'
+          }))
+          const filtered = list.filter((it) => !avoidIngredientIds.has(it.id))
+          setFoodPool(filtered)
+          setReady(true)
+          return
+        }
+
+        // roundPurpose === 'base'
+        const list = (data ?? []).map((r) => ({
+          id: String(r.spoonacular_ingredient_id),
+          name: r.name,
+          imageUrl: r.image_url ?? null,
+          category: 'base'
+        }))
+        const filtered = list.filter((it) => !avoidIngredientIds.has(it.id))
+        setFoodPool(filtered)
+        setReady(true)
+      } catch {
+        if (cancelled) return
+        setFoodPool([])
+        setReady(true)
+      }
+    })()
     return () => { cancelled = true }
-  }, [roundPurpose, onComplete])
+  }, [roundPurpose, onComplete, dislikeIds, notTodayIds])
 
   useEffect(() => {
     if (!ready || !gameStarted || gameOver || foodPool.length === 0) return
@@ -216,6 +237,7 @@ export default function RiverNetRound ({
             id: `f-${nextIdRef.current++}`,
             foodId: itemA.id,
             name: itemA.name,
+            imageUrl: itemA.imageUrl,
             column: colA,
             y: spawnY,
             speed,
@@ -225,6 +247,7 @@ export default function RiverNetRound ({
             id: `f-${nextIdRef.current++}`,
             foodId: itemB.id,
             name: itemB.name,
+            imageUrl: itemB.imageUrl,
             column: colB,
             y: spawnY,
             speed,
@@ -241,6 +264,7 @@ export default function RiverNetRound ({
           id: `f-${nextIdRef.current++}`,
           foodId: item.id,
           name: item.name,
+          imageUrl: item.imageUrl,
           column,
           y: spawnY,
           speed,
@@ -319,7 +343,7 @@ export default function RiverNetRound ({
     )
   }
 
-  const showIntro = (roundPurpose === 'base' || roundPurpose === 'all_ingredients') && !gameStarted && !gameOver
+  const showIntro = (roundPurpose === 'base' || roundPurpose === 'protein_vegetable' || roundPurpose === 'all_ingredients') && !gameStarted && !gameOver
 
   return (
     <View style={styles.container}>
@@ -356,8 +380,6 @@ export default function RiverNetRound ({
 
         {foods.map((f) => {
           const cx = f.column * COL_WIDTH + COL_WIDTH / 2
-          const assetKey = getFoodAsset(f.foodId, f.name, (f.category || 'base') as 'base' | 'protein' | 'vegetable')
-          const source = getFoodAssetSource(assetKey)
           return (
             <View
               key={f.id}
@@ -371,7 +393,9 @@ export default function RiverNetRound ({
                   borderRadius: FOOD_RADIUS
                 }
               ]}>
-              <Image source={source} style={styles.foodImage} resizeMode="contain" />
+              {f.imageUrl
+                ? <Image source={{ uri: f.imageUrl }} style={styles.foodImage} resizeMode="contain" />
+                : <View style={styles.foodImageFallback} />}
             </View>
           )
         })}
@@ -489,6 +513,12 @@ const styles = StyleSheet.create({
   foodImage: {
     width: FOOD_RADIUS * 2 - 4,
     height: FOOD_RADIUS * 2 - 4
+  },
+  foodImageFallback: {
+    width: FOOD_RADIUS * 2 - 4,
+    height: FOOD_RADIUS * 2 - 4,
+    borderRadius: FOOD_RADIUS,
+    backgroundColor: 'rgba(255,255,255,0.25)'
   },
   foodLabel: {
     fontSize: 10,

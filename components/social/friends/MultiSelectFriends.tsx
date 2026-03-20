@@ -3,6 +3,7 @@
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native'
 import { Check } from 'lucide-react-native'
 import type { FriendWithDetails } from '@/types/social'
+import { getDisplayUsername } from '@/lib/username-display'
 
 type MultiSelectFriendsProps = {
   friends: FriendWithDetails[]
@@ -33,7 +34,7 @@ export function MultiSelectFriends ({ friends, selectedIds, onToggle, emptyMessa
             <View style={[styles.checkbox, selected && styles.checkboxSelected]}>
               {selected ? <Check size={18} color="#fff" /> : null}
             </View>
-            <Text style={styles.name}>{item.username}</Text>
+            <Text style={styles.name}>{getDisplayUsername(item.username)}</Text>
             {item.friend_code ? <Text style={styles.code}>{item.friend_code}</Text> : null}
           </TouchableOpacity>
         )

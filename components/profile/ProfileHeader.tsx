@@ -2,6 +2,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator } fr
 import { Camera, Copy, ChevronRight } from 'lucide-react-native'
 import type { ThemeColors } from '@/lib/theme-colors'
 import { getAvatarFoodAssetSource, getAvatarFoodAssetSourceByKey, getFoodAvatarKey } from '@/lib/avatar-food-asset'
+import { getDisplayUsername } from '@/lib/username-display'
 
 type ProfileHeaderProps = {
   avatarUri?: string | null
@@ -50,7 +51,7 @@ export default function ProfileHeader ({
           <Image source={getAvatarFoodAssetSource(avatarSeed)} style={styles.avatar} resizeMode="cover" />
         ) : (
           <View style={[styles.avatarPlaceholder, c && { backgroundColor: c.primary }]}>
-            <Text style={styles.avatarLetter}>{username.charAt(0).toUpperCase() || '?'}</Text>
+            <Text style={styles.avatarLetter}>{getDisplayUsername(username).charAt(0).toUpperCase() || '?'}</Text>
           </View>
         )}
         {uploading ? (
@@ -69,7 +70,7 @@ export default function ProfileHeader ({
         onPress={onEditUsername}
         disabled={!onEditUsername}
         activeOpacity={onEditUsername ? 0.7 : 1}>
-        <Text style={[styles.username, c && { color: c.text }]}>{username}</Text>
+        <Text style={[styles.username, c && { color: c.text }]}>{getDisplayUsername(username)}</Text>
         {onEditUsername ? <ChevronRight size={20} color={c?.textMuted ?? '#94a3b8'} /> : null}
       </TouchableOpacity>
 

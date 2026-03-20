@@ -8,11 +8,11 @@ export type RoundPurpose =
   | 'all_ingredients'
   | 'cooking_method'
 
-/** Round index (0, 1, 2): first two rounds collect bases+proteins+vegetables; third is cooking method */
+/** Round index (0, 1): rounds collect ingredients (base/protein/vegetable) */
 export const ROUND_INDEX_TO_PURPOSE: Record<number, RoundPurpose> = {
   0: 'all_ingredients',
   1: 'all_ingredients',
-  2: 'cooking_method'
+  2: 'all_ingredients'
 }
 
 export const ROUND_PURPOSE_LABELS: Record<RoundPurpose, string> = {
@@ -25,7 +25,7 @@ export const ROUND_PURPOSE_LABELS: Record<RoundPurpose, string> = {
 /**
  * Result from a single round. Shape depends on round purpose.
  * all_ingredients: used for round 0 and 1; items interacted with in BOTH rounds get higher weight.
- * cooking_method: round 3; user selects one or more methods; all gathered food uses these methods for gallery filtering.
+ * cooking_method: (legacy) was round 3; kept for type compatibility but not used while round 3 is hidden.
  */
 export type RoundResult =
   | { purpose: 'base'; baseIds: string[] }

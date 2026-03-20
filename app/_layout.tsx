@@ -3,6 +3,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { Stack } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useThemeColors, useTheme } from '@/hooks/useTheme'
 import { useFrameworkReady } from '@/hooks/useFrameworkReady'
 import AuthRedirect from '@/components/AuthRedirect'
 import { ThemeProvider } from '@/contexts/ThemeContext'
@@ -12,8 +13,11 @@ LogBox.ignoreLogs(['Network request failed', 'AuthRetryableFetchError'])
 
 function RootStack () {
   const insets = useSafeAreaInsets()
+  const { resolvedTheme } = useTheme()
+  const colors = useThemeColors()
+  const statusBarStyle = resolvedTheme === 'dark' ? 'light' : 'dark'
   return (
-    <View style={{ flex: 1, paddingTop: insets.top, backgroundColor: '#000000' }}>
+    <View style={{ flex: 1, paddingTop: insets.top, backgroundColor: colors.background }}>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="privacy" />
@@ -30,7 +34,7 @@ function RootStack () {
         <Stack.Screen name="profile" />
         <Stack.Screen name="+not-found" />
       </Stack>
-      <StatusBar style="light" />
+      <StatusBar style={statusBarStyle} />
     </View>
   )
 }

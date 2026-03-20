@@ -10,38 +10,45 @@ import {
   Animated,
   Easing,
   PanResponder,
-  Linking
+  BackHandler,
+  Platform,
+  Image
 } from 'react-native'
 import { useFocusEffect } from '@react-navigation/native'
 import { useRouter } from 'expo-router'
 import { setLastFocusedTabIndex, getLastFocusedTabIndex } from '@/lib/tab-transition'
 import SwipeTabsContainer from '@/components/navigation/SwipeTabsContainer'
 import {
-  MapPin,
+  Calendar as CalendarIcon,
   UtensilsCrossed as MealOfTheDayIcon,
   Gamepad2,
   Sparkles,
   ChevronRight,
   UtensilsCrossed,
-  Image,
+  Image as ImageIcon,
   Trash2,
   CalendarPlus,
   Share2,
   X,
   Check,
   Shuffle,
-  CheckSquare
+  CheckSquare,
+  ShoppingCart
 } from 'lucide-react-native'
 import { useThemeColors } from '@/hooks/useTheme'
+import { useSocialAuth } from '@/hooks/useSocialAuth'
 import { useMealOfTheDay } from '@/hooks/useMealOfTheDay'
 import { useCalendarStore } from '@/store/calendar-store'
+import { useMealPhotosStore } from '@/store/meal-photos-store'
 import { useGameSessionStore } from '@/store/game-session'
+import { BannerMarqueeTitle } from '@/components/BannerMarqueeTitle'
 import BatchAddToCalendarModal from '@/components/calendar/BatchAddToCalendarModal'
 import AddToCalendarModal from '@/components/calendar/AddToCalendarModal'
 import MealDetailModal from '@/components/MealDetailModal'
 import { dateKey, formatShortDate, slotOrder } from '@/types/calendar'
 import type { CalendarEvent, MealSlot, SavedMeal } from '@/types/calendar'
 import { getEmptyMealsMessage } from '@/lib/empty-state-copy'
+import { supabase } from '@/lib/supabase'
 
 const SLOT_LABEL: Record<MealSlot, string> = {
   breakfast: 'Breakfast',
@@ -49,26 +56,12 @@ const SLOT_LABEL: Record<MealSlot, string> = {
   dinner: 'Dinner'
 }
 
-/** Group saved meals by display title; one row per name, subtitle = seasonings/cuisine */
-function groupMealsByTitle (meals: SavedMeal[]): { title: string; subtitle: string; meals: SavedMeal[] }[] {
-  const byTitle = new Map<string, SavedMeal[]>()
-  for (const m of meals) {
-    const key = (m.title || '').trim().toLowerCase()
-    if (!byTitle.has(key)) byTitle.set(key, [])
-    byTitle.get(key)!.push(m)
-  }
-  return Array.from(byTitle.entries()).map(([_key, groupMeals]) => {
-    const title = groupMeals[0].title
-    const allSeasonings = groupMeals.flatMap(m => m.seasonings ?? [])
-    const allGarnishes = groupMeals.flatMap(m => m.garnishes ?? [])
-    const unique = [...new Set([...allSeasonings, ...allGarnishes])].filter(Boolean)
-    const subtitle = unique.length > 0
-      ? unique.slice(0, 5).join(', ') + (unique.length > 5 ? '…' : '')
-      : groupMeals.length > 1
-        ? `${groupMeals.length} variants`
-        : ''
-    return { title, subtitle, meals: groupMeals }
-  })
+function savedMealRowSubtitle (meal: SavedMeal): string {
+  const seasonings = meal.seasonings ?? []
+  const garnishes = meal.garnishes ?? []
+  const unique = [...new Set([...seasonings, ...garnishes])].filter(Boolean)
+  if (unique.length === 0) return ''
+  return unique.slice(0, 5).join(', ') + (unique.length > 5 ? '…' : '')
 }
 
 export default function HomeScreen () {
@@ -86,6 +79,13 @@ export default function HomeScreen () {
   } = useCalendarStore()
 
   const startSession = useGameSessionStore((s) => s.startSession)
+  const { profile } = useSocialAuth()
+  const { load: loadMealPhotos, getPhotoUrl } = useMealPhotosStore()
+
+  useEffect(() => {
+    void loadMealPhotos()
+  }, [loadMealPhotos])
+
   const todayKey = useMemo(() => dateKey(new Date()), [])
   const todayEvents = useMemo(
     () => events.filter((e) => e.date === todayKey).sort((a, b) => slotOrder(a.mealSlot, b.mealSlot)),
@@ -137,24 +137,69 @@ export default function HomeScreen () {
   )
 
   const [isSelectionMode, setIsSelectionMode] = useState(false)
+  const isSelectionModeRef = useRef(false)
+  isSelectionModeRef.current = isSelectionMode
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [showBatchAddModal, setShowBatchAddModal] = useState(false)
   const [detailMeal, setDetailMeal] = useState<SavedMeal | null>(null)
   const [addToCalendarMeal, setAddToCalendarMeal] = useState<SavedMeal | null>(null)
   const [showMealOfTheDayModal, setShowMealOfTheDayModal] = useState(false)
+  const [mealThumbnailMap, setMealThumbnailMap] = useState<Map<string, string>>(new Map())
+  const [galleryMealThumbnailById, setGalleryMealThumbnailById] = useState<Map<string, string>>(new Map())
 
   const colors = useThemeColors()
   const { meal: mealOfTheDay, loading: mealOfTheDayLoading } = useMealOfTheDay()
 
-  const handleMealNearMe = useCallback((mealTitle?: string) => {
-    const query = mealTitle ? `${mealTitle.trim()} near me` : 'meal near me'
-    const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`
-    void Linking.openURL(url)
-  }, [])
-
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadThumbnails () {
+      const { data: galleryData } = await supabase
+        .from('gallery_meals')
+        .select('id, base_id, protein_id, vegetable_id, title, spoonacular_recipe_id, image_urls')
+      if (cancelled || !galleryData?.length) return
+      const recipeIds = [...new Set((galleryData as Array<{ spoonacular_recipe_id: number | null }>).map((r) => r.spoonacular_recipe_id).filter((id): id is number => id != null))]
+      const urlByRecipeId = new Map<number, string>()
+      if (recipeIds.length > 0) {
+        const { data: recipeData } = await supabase
+          .from('spoonacular_recipe_details')
+          .select('spoonacular_recipe_id, image_url')
+          .in('spoonacular_recipe_id', recipeIds)
+        if (!cancelled && recipeData?.length) {
+          for (const r of recipeData as Array<{ spoonacular_recipe_id: number; image_url: string | null }>) {
+            if (r.image_url) urlByRecipeId.set(r.spoonacular_recipe_id, r.image_url)
+          }
+        }
+      }
+      const map = new Map<string, string>()
+      const mapById = new Map<string, string>()
+      for (const row of galleryData as Array<{
+        id: string
+        base_id: string | null
+        protein_id: string | null
+        vegetable_id: string | null
+        title: string | null
+        spoonacular_recipe_id: number | null
+        image_urls: string[] | null
+      }>) {
+        const key = `${row.base_id ?? ''}|${row.protein_id ?? ''}|${row.vegetable_id ?? ''}|${(row.title ?? '').trim().toLowerCase()}`
+        const recipeUrl = row.spoonacular_recipe_id != null ? urlByRecipeId.get(row.spoonacular_recipe_id) : undefined
+        const galleryThumb = Array.isArray(row.image_urls) && row.image_urls.length > 0 ? row.image_urls[0] : undefined
+        const thumbUrl = galleryThumb ?? recipeUrl
+        if (thumbUrl) {
+          map.set(key, thumbUrl)
+          mapById.set(row.id, thumbUrl)
+        }
+      }
+      if (!cancelled) setMealThumbnailMap(map)
+      if (!cancelled) setGalleryMealThumbnailById(mapById)
+    }
+    void loadThumbnails()
+    return () => { cancelled = true }
+  }, [])
 
   useFocusEffect(
     useCallback(() => {
@@ -198,6 +243,34 @@ export default function HomeScreen () {
     setSelectedIds(new Set())
     setShowBatchAddModal(false)
   }, [])
+
+  useFocusEffect(
+    useCallback(() => {
+      if (Platform.OS !== 'android') {
+        return () => {
+          setIsSelectionMode(false)
+          setSelectedIds(new Set())
+          setShowBatchAddModal(false)
+        }
+      }
+      const onBack = () => {
+        if (isSelectionModeRef.current) {
+          setIsSelectionMode(false)
+          setSelectedIds(new Set())
+          setShowBatchAddModal(false)
+          return true
+        }
+        return false
+      }
+      const sub = BackHandler.addEventListener('hardwareBackPress', onBack)
+      return () => {
+        sub.remove()
+        setIsSelectionMode(false)
+        setSelectedIds(new Set())
+        setShowBatchAddModal(false)
+      }
+    }, [])
+  )
 
   const handleDeleteSelected = useCallback(() => {
     const count = selectedIds.size
@@ -256,6 +329,17 @@ export default function HomeScreen () {
     ;(router.push as (href: string) => void)('/game/spin')
   }, [selectedIds, setSpinMealIds, exitSelectionMode, router])
 
+  const handleGrocerySelected = useCallback(() => {
+    if (selectedIds.size === 0) return
+    const mealIds = Array.from(selectedIds).join(',')
+    exitSelectionMode()
+    router.push({ pathname: '/grocery-list', params: { mode: 'multi', mealIds } })
+  }, [selectedIds, exitSelectionMode, router])
+
+  const handleOpenFullGrocery = useCallback(() => {
+    router.push({ pathname: '/grocery-list', params: { mode: 'all' } })
+  }, [router])
+
   const handleSingleAddToCalendarConfirm = useCallback(
     (date: string, slot: MealSlot) => {
       if (!addToCalendarMeal) return
@@ -274,14 +358,17 @@ export default function HomeScreen () {
     [addToCalendarMeal, addEvent]
   )
 
-  const groupedMeals = useMemo(() => groupMealsByTitle(savedMeals), [savedMeals])
+  const mealsListSorted = useMemo(
+    () => [...savedMeals].sort((a, b) => b.createdAt - a.createdAt),
+    [savedMeals]
+  )
   const selectedMeals = savedMeals.filter((m) => selectedIds.has(m.id))
 
   const PLAY_TAB_INDEX = 0
   const MEALS_SLIDE_OFFSET = -80
   const [mealsSlideFromX, setMealsSlideFromX] = useState(80)
   const mealsSlideAnims = useRef<Animated.Value[]>([])
-  const listLen = groupedMeals.length
+  const listLen = mealsListSorted.length
   while (mealsSlideAnims.current.length < listLen) {
     mealsSlideAnims.current.push(new Animated.Value(0)) // 0 = invisible + off to side, 1 = visible + in place
   }
@@ -358,23 +445,13 @@ export default function HomeScreen () {
         baseId: meal.baseId,
         proteinId: meal.proteinId,
         vegetableId: meal.vegetableId,
-        method: meal.method
+        method: meal.method,
+        galleryMealId: (meal.id ?? '').trim() || undefined
       })
       setShowMealOfTheDayModal(false)
     },
     [addSavedMeal]
   )
-
-  const toggleGroupSelection = useCallback((groupMeals: SavedMeal[]) => {
-    const ids = new Set(groupMeals.map((m) => m.id))
-    const anySelected = groupMeals.some((m) => selectedIds.has(m.id))
-    setSelectedIds((prev) => {
-      const next = new Set(prev)
-      if (anySelected) ids.forEach((id) => next.delete(id))
-      else ids.forEach((id) => next.add(id))
-      return next
-    })
-  }, [selectedIds])
 
   const handleSelectAll = useCallback(() => {
     setSelectedIds(new Set(savedMeals.map((m) => m.id)))
@@ -384,76 +461,81 @@ export default function HomeScreen () {
     <SwipeTabsContainer tabIndex={0}>
       <View style={[styles.container, { backgroundColor: colors.background }]}>
         <View style={styles.main}>
-        <View style={styles.banner}>
-          <View style={styles.bannerHeader}>
-            <MapPin size={24} color="#ffffff" />
-            <Text style={styles.bannerTitle}>Meal near me</Text>
-          </View>
-          {!bannerMeal ? (
-            <TouchableOpacity
-              style={styles.bannerEvent}
-              onPress={() => handleMealNearMe()}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.bannerEventLabel}>Search restaurants nearby</Text>
-              <ChevronRight size={20} color="rgba(255,255,255,0.8)" />
-            </TouchableOpacity>
-          ) : (
-            <>
+          <View style={styles.banner}>
+            <View style={styles.bannerHeader}>
+              <CalendarIcon size={24} color="#ffffff" />
+              <Text style={styles.bannerTitle}>Meal for today</Text>
+            </View>
+            {!bannerMeal ? (
               <TouchableOpacity
                 style={styles.bannerEvent}
-                onPress={() => handleMealNearMe(bannerMeal.title)}
+                onPress={() => router.push('/(tabs)/calendar')}
                 activeOpacity={0.8}
               >
-                <Text style={styles.bannerEventSlot}>
-                  {SLOT_LABEL[bannerMeal.mealSlot]}
-                </Text>
-                <Text style={styles.bannerEventLabel}>{bannerMeal.title}</Text>
-                <Text style={styles.bannerEventDate}>
-                  {bannerMeal.date === todayKey
-                    ? 'Today'
-                    : formatShortDate(bannerMeal.date)}
-                </Text>
+                <Text style={styles.bannerEventLabel}>Nothing planned</Text>
                 <ChevronRight size={20} color="rgba(255,255,255,0.8)" />
               </TouchableOpacity>
-              {upcomingAfterBanner.length > 0 && (
-                <View style={styles.carouselWrap} {...carouselPan.panHandlers}>
-                  <TouchableOpacity
-                    style={styles.carouselCard}
-                    onPress={() => handleMealNearMe(upcomingAfterBanner[carouselIndex].title)}
-                    activeOpacity={0.9}
-                  >
-                    <Text style={styles.carouselCardDay}>
-                      {formatShortDate(upcomingAfterBanner[carouselIndex].date)}
-                    </Text>
-                    <Text style={styles.carouselCardSlot}>
-                      {SLOT_LABEL[upcomingAfterBanner[carouselIndex].mealSlot]}
-                    </Text>
-                    <Text style={styles.carouselCardLabel} numberOfLines={2}>
-                      {upcomingAfterBanner[carouselIndex].title}
-                    </Text>
-                  </TouchableOpacity>
-                  {upcomingAfterBanner.length > 1 && (
-                    <View style={styles.carouselDotsRight}>
-                      {upcomingAfterBanner.map((_, i) => (
-                        <View
-                          key={i}
-                          style={[
-                            styles.carouselDot,
-                            i === carouselIndex && styles.carouselDotActive
-                          ]}
-                        />
-                      ))}
-                    </View>
-                  )}
-                </View>
-              )}
-            </>
-          )}
-        </View>
+            ) : (
+              <>
+                <TouchableOpacity
+                  style={styles.bannerEvent}
+                  onPress={() => router.push('/(tabs)/calendar')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.bannerEventSlot}>
+                    {SLOT_LABEL[bannerMeal.mealSlot]}
+                  </Text>
+                  <View style={styles.bannerEventTitleWrap}>
+                    <BannerMarqueeTitle text={bannerMeal.title} style={styles.bannerEventLabelText} />
+                  </View>
+                  <Text style={styles.bannerEventDate}>
+                    {bannerMeal.date === todayKey
+                      ? 'Today'
+                      : formatShortDate(bannerMeal.date)}
+                  </Text>
+                  <ChevronRight size={20} color="rgba(255,255,255,0.8)" />
+                </TouchableOpacity>
+                {upcomingAfterBanner.length > 0 && (
+                  <View style={styles.carouselWrap} {...carouselPan.panHandlers}>
+                    <TouchableOpacity
+                      style={styles.carouselCard}
+                      onPress={() => router.push('/(tabs)/calendar')}
+                      activeOpacity={0.9}
+                    >
+                      <Text style={styles.carouselCardDay}>
+                        {formatShortDate(upcomingAfterBanner[carouselIndex].date)}
+                      </Text>
+                      <Text style={styles.carouselCardSlot}>
+                        {SLOT_LABEL[upcomingAfterBanner[carouselIndex].mealSlot]}
+                      </Text>
+                      <BannerMarqueeTitle
+                        text={upcomingAfterBanner[carouselIndex].title}
+                        style={styles.carouselCardLabel}
+                      />
+                    </TouchableOpacity>
+                    {upcomingAfterBanner.length > 1 && (
+                      <View style={styles.carouselDotsRight}>
+                        {upcomingAfterBanner.map((_, i) => (
+                          <View
+                            key={i}
+                            style={[
+                              styles.carouselDot,
+                              i === carouselIndex && styles.carouselDotActive
+                            ]}
+                          />
+                        ))}
+                      </View>
+                    )}
+                  </View>
+                )}
+              </>
+            )}
+          </View>
 
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>Meals I want</Text>
+          <View style={styles.sectionTitleRow}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>Meals I want</Text>
+          </View>
           <ScrollView
             style={styles.mealsList}
             contentContainerStyle={styles.mealsListContent}
@@ -467,7 +549,7 @@ export default function HomeScreen () {
                     { label: 'Meal of\nthe day', Icon: MealOfTheDayIcon, style: styles.sideButtonMealOfTheDay, onPress: handleMealOfTheDayPress, disabled: mealOfTheDayLoading },
                     { label: 'Mini\ngame', Icon: Gamepad2, style: styles.sideButtonGames, onPress: () => { startSession('lunch'); router.replace('/game/round/0') } },
                     { label: 'Feelings', Icon: Sparkles, style: styles.sideButtonFeelings, onPress: () => router.push('/game/feeling') },
-                    { label: 'Food\ngallery', Icon: Image, style: styles.sideButtonGallery, onPress: () => router.push('/food-gallery') }
+                    { label: 'Food\ngallery', Icon: ImageIcon, style: styles.sideButtonGallery, onPress: () => router.push('/food-gallery') }
                   ].map((btn, i) => {
                     const Icon = btn.Icon
                     return (
@@ -510,13 +592,13 @@ export default function HomeScreen () {
                 </View>
               </View>
             ) : (
-              groupedMeals.map((group, index) => {
-                const groupIds = group.meals.map((m) => m.id)
-                const anySelected = group.meals.some((m) => selectedIds.has(m.id))
+              mealsListSorted.map((meal, index) => {
+                const anySelected = selectedIds.has(meal.id)
                 const progress = mealsSlideAnims.current[index]
+                const rowSubtitle = savedMealRowSubtitle(meal)
                 return (
                   <Animated.View
-                    key={group.title + group.meals[0].id}
+                    key={meal.id}
                     style={
                       progress
                         ? {
@@ -540,13 +622,13 @@ export default function HomeScreen () {
                         pressed && !isSelectionMode && styles.mealRowPressed
                       ]}
                       onPress={() => {
-                        if (isSelectionMode) toggleGroupSelection(group.meals)
-                        else setDetailMeal(group.meals[0])
+                        if (isSelectionMode) toggleSelect(meal.id)
+                        else setDetailMeal(meal)
                       }}
                       onLongPress={() => {
                         if (!isSelectionMode) {
                           setIsSelectionMode(true)
-                          setSelectedIds(new Set(groupIds))
+                          setSelectedIds(new Set([meal.id]))
                         }
                       }}
                       delayLongPress={500}>
@@ -554,13 +636,21 @@ export default function HomeScreen () {
                         <View style={[styles.mealRowCheck, anySelected && styles.mealRowCheckSelected]}>
                           {anySelected && <Check size={18} color="#ffffff" />}
                         </View>
-                      ) : (
-                        <UtensilsCrossed size={20} color={colors.textMuted} />
-                      )}
+                      ) : (() => {
+                        const photoUrl = getPhotoUrl(meal.id)
+                        const galleryThumbUrl = meal.galleryMealId
+                          ? galleryMealThumbnailById.get(String(meal.galleryMealId).trim())
+                          : undefined
+                        const recipeThumb = mealThumbnailMap.get(`${meal.baseId}|${meal.proteinId}|${meal.vegetableId}|${(meal.title ?? '').trim().toLowerCase()}`)
+                        const thumbUrl = photoUrl || galleryThumbUrl || recipeThumb
+                        return thumbUrl
+                          ? <Image source={{ uri: thumbUrl }} style={styles.mealRowThumb} resizeMode="cover" />
+                          : <UtensilsCrossed size={20} color={colors.textMuted} />
+                      })()}
                       <View style={styles.mealRowTextWrap}>
-                        <Text style={[styles.mealRowLabel, { color: colors.text }]}>{group.title}</Text>
-                        {group.subtitle ? (
-                          <Text style={[styles.mealRowSubtitle, { color: colors.textMuted }]} numberOfLines={1}>{group.subtitle}</Text>
+                        <Text style={[styles.mealRowLabel, { color: colors.text }]}>{meal.title}</Text>
+                        {rowSubtitle ? (
+                          <Text style={[styles.mealRowSubtitle, { color: colors.textMuted }]} numberOfLines={1}>{rowSubtitle}</Text>
                         ) : null}
                       </View>
                       {!isSelectionMode && <ChevronRight size={18} color={colors.textMuted} />}
@@ -572,12 +662,23 @@ export default function HomeScreen () {
           </ScrollView>
 
           {!isSelectionMode && hydrated && savedMeals.length > 0 && (
-            <TouchableOpacity
-              style={[styles.spinLink, { backgroundColor: colors.secondaryBg }]}
-              onPress={() => router.push('/game/spin')}
-              activeOpacity={0.7}>
-              <Text style={[styles.spinLinkText, { color: colors.secondary }]}>Still can't decide? Spin to pick one</Text>
-            </TouchableOpacity>
+            <View style={styles.decisionRow}>
+              <TouchableOpacity
+                style={[styles.spinLink, styles.decisionBtnHalf, { backgroundColor: colors.secondaryBg }]}
+                onPress={() => router.push('/game/spin')}
+                activeOpacity={0.7}>
+                <Text style={[styles.spinLinkText, { color: colors.secondary }]}>Still can't decide? Spin to pick one</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.fullGroceryBtn, styles.decisionBtnHalf, { backgroundColor: colors.secondaryBg, borderColor: colors.cardBorder }]}
+                onPress={handleOpenFullGrocery}
+                activeOpacity={0.85}
+                accessibilityLabel="Open full grocery list"
+              >
+                <ShoppingCart size={18} color={colors.primary} />
+                <Text style={[styles.fullGroceryBtnText, { color: colors.text }]}>Full grocery list</Text>
+              </TouchableOpacity>
+            </View>
           )}
 
           {isSelectionMode && (
@@ -614,6 +715,15 @@ export default function HomeScreen () {
                   <Share2 size={20} color={selectedIds.size === 0 ? colors.textMuted : colors.secondary} />
                   <Text style={[styles.actionBarBtnText, { color: colors.text }, selectedIds.size === 0 && { color: colors.textMuted }]}>
                     Share for votes
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.actionBarBtn, { backgroundColor: colors.secondaryBg }]}
+                  onPress={handleGrocerySelected}
+                  disabled={selectedIds.size === 0}>
+                  <ShoppingCart size={20} color={selectedIds.size === 0 ? colors.textMuted : colors.primary} />
+                  <Text style={[styles.actionBarBtnText, { color: colors.text }, selectedIds.size === 0 && { color: colors.textMuted }]}>
+                    Grocery list
                   </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -689,7 +799,7 @@ export default function HomeScreen () {
           { Icon: MealOfTheDayIcon, style: styles.sideButtonMealOfTheDay, onPress: handleMealOfTheDayPress, disabled: mealOfTheDayLoading, label: "Meal of\nthe day" },
           { Icon: Gamepad2, style: styles.sideButtonGames, onPress: () => { startSession('lunch'); router.replace('/game/round/0') }, disabled: false, label: "Mini\ngame", longPress: () => router.replace({ pathname: '/game/results', params: { base: '11111111-1111-1111-1111-111111111101', protein: '22222222-2222-2222-2222-222222222201', vegetable: '33333333-3333-3333-3333-333333333301', method: 'grilled' } }) },
           { Icon: Sparkles, style: styles.sideButtonFeelings, onPress: () => router.push('/game/feeling'), disabled: false, label: 'Feelings' },
-          { Icon: Image, style: styles.sideButtonGallery, onPress: () => router.push('/food-gallery'), disabled: false, label: "Food\ngallery" }
+          { Icon: ImageIcon, style: styles.sideButtonGallery, onPress: () => router.push('/food-gallery'), disabled: false, label: "Food\ngallery" }
         ].map((btn, i) => {
           const Icon = btn.Icon
           return (
@@ -792,8 +902,19 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.8)',
     marginRight: 10
   },
+  bannerEventTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+    marginRight: 8
+  },
+  /** Empty banner row (“Nothing planned”) */
   bannerEventLabel: {
     flex: 1,
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#ffffff'
+  },
+  bannerEventLabelText: {
     fontSize: 17,
     fontWeight: '700',
     color: '#ffffff'
@@ -810,6 +931,7 @@ const styles = StyleSheet.create({
   },
   carouselCard: {
     flex: 1,
+    minWidth: 0,
     backgroundColor: 'rgba(255,255,255,0.2)',
     borderRadius: 12,
     padding: 12,
@@ -861,11 +983,30 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 120
   },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12
+  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '700',
     color: '#1e293b',
     marginBottom: 10
+  },
+  groceryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    height: 34,
+    borderRadius: 999,
+    borderWidth: 1
+  },
+  groceryBtnText: {
+    fontSize: 13,
+    fontWeight: '800'
   },
   mealsList: {
     flex: 1,
@@ -891,6 +1032,11 @@ const styles = StyleSheet.create({
   },
   mealRowPressed: {
     opacity: 0.85
+  },
+  mealRowThumb: {
+    width: 24,
+    height: 24,
+    borderRadius: 6
   },
   mealRowCheck: {
     width: 24,
@@ -976,16 +1122,40 @@ const styles = StyleSheet.create({
   },
   spinLink: {
     marginTop: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
     borderRadius: 10,
     backgroundColor: '#f1f5f9',
     alignItems: 'center'
   },
   spinLinkText: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '600',
-    color: '#6366f1'
+    color: '#6366f1',
+    textAlign: 'center'
+  },
+  decisionRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    gap: 8
+  },
+  decisionBtnHalf: {
+    flex: 1,
+    minHeight: 34
+  },
+  fullGroceryBtn: {
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6
+  },
+  fullGroceryBtnText: {
+    fontSize: 12,
+    fontWeight: '700'
   },
   emptyText: {
     fontSize: 14,

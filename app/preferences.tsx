@@ -2,12 +2,17 @@ import { useState, useEffect, useCallback } from 'react'
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native'
 import { useRouter } from 'expo-router'
 import { supabase } from '@/lib/supabase'
-import { FoodItem } from '@/types/database'
-import { Heart, X, Ban, ChevronLeft, Check } from 'lucide-react-native'
+import { Heart, X, Ban, ChevronLeft, Check, ChevronDown, ChevronRight } from 'lucide-react-native'
 import { useThemeColors } from '@/hooks/useTheme'
 import { useSocialAuth } from '@/hooks/useSocialAuth'
 import { useProfileSettings } from '@/hooks/useProfileSettings'
-import { DIETS, getAllowedFoodNames, getExcludedFoodNames, getFoodIdsByNames } from '@/lib/diets'
+import {
+  DIETS,
+  dietOnFavoritesOnlyAddsExclusions,
+  getAllowedFoodNames,
+  getExcludedFoodNames,
+  getFoodIdsByNames
+} from '@/lib/diets'
 import { useFoodPreferencesStore, type PreferenceKind } from '@/store/food-preferences-store'
 
 function endOfTodayISO (): string {
@@ -20,6 +25,48 @@ function endOfTodayISO (): string {
 
 type PreferenceTab = PreferenceKind
 
+type IngredientItem = {
+  id: string
+  name: string
+}
+
+type IngredientGroup = {
+  groupKey: string
+  displayName: string
+  memberIds: string[]
+  memberNames: string[]
+}
+
+function normalizeIngredientName (name: string): string {
+  const base = (name ?? '')
+    .toLowerCase()
+    .trim()
+    .replace(/[-–]/g, ' ')
+    .replace(/\s+/g, ' ')
+  if (!base) return ''
+
+  // Canonicalize a few Spoonacular name variants we see so duplicates collapse into one button.
+  const corrected = base
+    .replace(/\bchesse\b/g, 'cheese')
+    .replace(/\bmayonaise\b/g, 'mayonnaise')
+    .replace(/\bmayonnaisse\b/g, 'mayonnaise')
+    .replace(/\bvinegarrette\b/g, 'vinaigrette')
+    .replace(/\byoghurt\b/g, 'yogurt')
+    .replace(/\boysters sauce\b/g, 'oyster sauce')
+    .replace(/^celery stalks?$/g, 'celery')
+    .replace(/^package\s+artichoke hearts$/g, 'artichoke hearts')
+    .replace(/^reduced fat mexican blend cheese$/g, 'mexican cheese')
+
+  // If it's of the form "<single-word> cheese", group it under "<single-word>".
+  const cheeseMatch = corrected.match(/^(.+?) cheese$/)
+  if (cheeseMatch) {
+    const head = (cheeseMatch[1] ?? '').trim()
+    if (head && !head.includes(' ')) return head
+  }
+
+  return corrected
+}
+
 export default function PreferencesScreen () {
   const router = useRouter()
   const colors = useThemeColors()
@@ -27,7 +74,7 @@ export default function PreferencesScreen () {
   const authId = profile?.auth_id ?? undefined
   const { updateProfile } = useProfileSettings(authId, profile, refreshProfile)
   const [loading, setLoading] = useState(true)
-  const [foods, setFoods] = useState<FoodItem[]>([])
+  const [ingredients, setIngredients] = useState<IngredientItem[]>([])
 
   const {
     load: loadPreferences,
@@ -41,7 +88,6 @@ export default function PreferencesScreen () {
     setNotToday,
     setAppliedDietIds: setAppliedDietIdsInStore,
     updateLists,
-    getFoodStatus
   } = useFoodPreferencesStore()
 
   const [selectedTab, setSelectedTab] = useState<PreferenceTab>('favorite')
@@ -51,7 +97,7 @@ export default function PreferencesScreen () {
   }, [loadPreferences])
 
   useEffect(() => {
-    loadFoods()
+    loadIngredients()
   }, [])
 
   useEffect(() => {
@@ -69,27 +115,23 @@ export default function PreferencesScreen () {
     })
   }, [selectedNotTodayIds, authId, profile, updateProfile])
 
-  const loadFoods = async () => {
+  const loadIngredients = async () => {
     try {
       const { data, error } = await supabase
-        .from('food_items')
-        .select('id, name, category')
-        .order('category', { ascending: true })
+        .from('ingredient_assets')
+        .select('spoonacular_ingredient_id, name')
         .order('name', { ascending: true })
-
       if (error) {
-        setFoods([])
+        setIngredients([])
       } else {
-        const rows = (data ?? []) as { id: string; name: string; category: string }[]
-        setFoods(rows.map(row => ({
-          id: row.id,
-          name: row.name,
-          category: row.category as FoodItem['category'],
-          created_at: ''
+        const rows = (data ?? []) as { spoonacular_ingredient_id: number; name: string }[]
+        setIngredients(rows.map(row => ({
+          id: String(row.spoonacular_ingredient_id),
+          name: row.name
         })))
       }
     } catch {
-      setFoods([])
+      setIngredients([])
     } finally {
       setLoading(false)
     }
@@ -101,22 +143,34 @@ export default function PreferencesScreen () {
     return selectedNotTodayIds
   }, [selectedFavoriteIds, selectedDislikeIds, selectedNotTodayIds])
 
-  const toggleFood = useCallback((foodId: string) => {
-    const inFav = selectedFavoriteIds.includes(foodId)
-    const inDis = selectedDislikeIds.includes(foodId)
-    const inNot = selectedNotTodayIds.includes(foodId)
-    const inCurrent = selectedTab === 'favorite' ? inFav : selectedTab === 'dislike' ? inDis : inNot
+  const toggleIngredientGroup = useCallback((group: IngredientGroup) => {
+    const memberSet = new Set(group.memberIds)
+
+    const currentIds = getSelectedIdsForTab(selectedTab)
+    const inCurrent = group.memberIds.some(id => currentIds.includes(id))
+
     if (inCurrent) {
-      const ids = getSelectedIdsForTab(selectedTab).filter(id => id !== foodId)
+      // Remove all member ids from the current preference list.
+      const ids = currentIds.filter(id => !memberSet.has(id))
       if (selectedTab === 'favorite') void updateLists({ favoriteIds: ids })
       else if (selectedTab === 'dislike') void updateLists({ dislikeIds: ids })
       else void updateLists({ notTodayIds: ids })
-    } else {
-      const newFav = selectedTab === 'favorite' ? [...selectedFavoriteIds, foodId] : selectedFavoriteIds.filter(id => id !== foodId)
-      const newDis = selectedTab === 'dislike' ? [...selectedDislikeIds, foodId] : selectedDislikeIds.filter(id => id !== foodId)
-      const newNot = selectedTab === 'never_today' ? [...selectedNotTodayIds, foodId] : selectedNotTodayIds.filter(id => id !== foodId)
-      void updateLists({ favoriteIds: newFav, dislikeIds: newDis, notTodayIds: newNot })
+      return
     }
+
+    // Add all member ids to the current preference list, and remove them from the other lists.
+    const uniq = (arr: string[]) => Array.from(new Set(arr))
+    const newFav = selectedTab === 'favorite'
+      ? uniq([...selectedFavoriteIds, ...group.memberIds])
+      : selectedFavoriteIds.filter(id => !memberSet.has(id))
+    const newDis = selectedTab === 'dislike'
+      ? uniq([...selectedDislikeIds, ...group.memberIds])
+      : selectedDislikeIds.filter(id => !memberSet.has(id))
+    const newNot = selectedTab === 'never_today'
+      ? uniq([...selectedNotTodayIds, ...group.memberIds])
+      : selectedNotTodayIds.filter(id => !memberSet.has(id))
+
+    void updateLists({ favoriteIds: newFav, dislikeIds: newDis, notTodayIds: newNot })
   }, [selectedTab, selectedFavoriteIds, selectedDislikeIds, selectedNotTodayIds, getSelectedIdsForTab, updateLists])
 
   const isDietApplied = useCallback((dietId: string) => {
@@ -126,8 +180,19 @@ export default function PreferencesScreen () {
   const toggleDiet = useCallback((dietId: string) => {
     const tab = selectedTab
     const isApplied = appliedDietIds[tab].includes(dietId)
+
+    if (tab === 'favorite' && dietOnFavoritesOnlyAddsExclusions(dietId)) {
+      if (isApplied) {
+        const newDietIds = appliedDietIds.favorite.filter(id => id !== dietId)
+        void setAppliedDietIdsInStore('favorite', newDietIds)
+      } else {
+        void setAppliedDietIdsInStore('favorite', [...appliedDietIds.favorite, dietId])
+      }
+      return
+    }
+
     const names = tab === 'favorite' ? getAllowedFoodNames(dietId) : getExcludedFoodNames(dietId)
-    const ids = getFoodIdsByNames(foods, names)
+    const ids = getFoodIdsByNames(ingredients, names)
     const idSet = new Set(ids)
 
     if (isApplied) {
@@ -143,13 +208,69 @@ export default function PreferencesScreen () {
       else if (tab === 'dislike') void setDislikes([...new Set([...selectedDislikeIds, ...ids])])
       else void setNotToday([...new Set([...selectedNotTodayIds, ...ids])])
     }
-  }, [selectedTab, foods, appliedDietIds, selectedFavoriteIds, selectedDislikeIds, selectedNotTodayIds, setAppliedDietIdsInStore, setFavorites, setDislikes, setNotToday])
+  }, [selectedTab, ingredients, appliedDietIds, selectedFavoriteIds, selectedDislikeIds, selectedNotTodayIds, setAppliedDietIdsInStore, setFavorites, setDislikes, setNotToday])
 
-  const groupedFoods = foods.reduce((acc, food) => {
-    if (!acc[food.category]) acc[food.category] = []
-    acc[food.category].push(food)
+  const ingredientGroups = (() => {
+    const byId = new Map<string, IngredientItem>()
+    for (const ing of ingredients) byId.set(ing.id, ing)
+    const selected = new Set([...selectedFavoriteIds, ...selectedDislikeIds, ...selectedNotTodayIds])
+    for (const id of selected) {
+      if (!byId.has(id)) byId.set(id, { id, name: id })
+    }
+
+    const all = Array.from(byId.values())
+      .sort((a, b) => a.name.localeCompare(b.name))
+
+    const groupsByKey = new Map<string, { memberItems: IngredientItem[] }>()
+    for (const ing of all) {
+      const key = normalizeIngredientName(ing.name) || `id:${ing.id}`
+      const bucket = groupsByKey.get(key) ?? { memberItems: [] }
+      bucket.memberItems.push(ing)
+      groupsByKey.set(key, bucket)
+    }
+
+    const groups: IngredientGroup[] = Array.from(groupsByKey.entries()).map(([groupKey, v]) => {
+      const memberItems = v.memberItems
+      const displayName = [...memberItems]
+        .sort((a, b) => a.name.length - b.name.length || a.name.localeCompare(b.name))[0]?.name ?? groupKey
+      const memberIds = memberItems.map(m => m.id)
+      const memberNames = memberItems.map(m => m.name)
+      return { groupKey, displayName, memberIds, memberNames }
+    })
+
+    // Sort by display name for consistent browsing.
+    return groups.sort((a, b) => a.displayName.localeCompare(b.displayName))
+  })()
+
+  const headerKeyForIngredient = (name: string) => {
+    const t = (name ?? '').trim()
+    if (!t) return '#'
+    const first = t[0].toUpperCase()
+    if (first >= 'A' && first <= 'Z') return first
+    return '#'
+  }
+
+  const groupedIngredients = ingredientGroups.reduce((acc, group) => {
+    const key = headerKeyForIngredient(group.displayName)
+    if (!acc[key]) acc[key] = []
+    acc[key].push(group)
     return acc
-  }, {} as Record<string, FoodItem[]>)
+  }, {} as Record<string, IngredientGroup[]>)
+
+  const headerKeys = Object.keys(groupedIngredients).sort((a, b) => {
+    if (a === '#') return 1
+    if (b === '#') return -1
+    return a.localeCompare(b)
+  })
+
+  const [openIngredientHeader, setOpenIngredientHeader] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!hydrated) return
+    if (openIngredientHeader != null) return
+    if (headerKeys.length === 0) return
+    setOpenIngredientHeader(headerKeys[0])
+  }, [hydrated, openIngredientHeader, headerKeys])
 
   const selectors: { id: PreferenceTab; label: string; icon: typeof Heart; color: string }[] = [
     { id: 'favorite', label: 'Favorites', icon: Heart, color: '#22c55e' },
@@ -178,7 +299,7 @@ export default function PreferencesScreen () {
 
       <View style={[styles.selectorSection, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
         <Text style={[styles.selectorHint, { color: colors.textMuted }]}>
-          Choose a type below, then tap foods to mark them. Tap again to remove.
+          Choose a type below, then tap ingredients to mark them. Tap again to remove.
         </Text>
         <View style={styles.selectors}>
           {selectors.map((sel) => {
@@ -211,7 +332,7 @@ export default function PreferencesScreen () {
           <Text style={[styles.dietSectionTitle, { color: colors.text }]}>Dietary restrictions</Text>
           <Text style={[styles.dietSectionHint, { color: colors.textMuted }]}>
             {selectedTab === 'favorite'
-              ? 'Tap a diet to add or remove allowed foods from Favorites.'
+              ? 'Tap a diet to add allowed foods to Favorites. Nut allergy hides meals with nuts (and similar) in lists — it does not add individual foods to Favorites.'
               : selectedTab === 'dislike'
                 ? 'Tap a diet to add or remove excluded foods from Dislikes.'
                 : 'Tap a diet to add or remove foods from Not Today.'}
@@ -241,40 +362,73 @@ export default function PreferencesScreen () {
           </View>
         </View>
 
-        {Object.entries(groupedFoods).map(([category, items]) => (
-          <View key={category} style={styles.categorySection}>
-            <Text style={[styles.categoryTitle, { color: colors.textMuted }]}>{category.toUpperCase()}</Text>
-            <View style={styles.foodGrid}>
-              {items.map((food) => {
-                const status = getFoodStatus(food.id)
-                const color = status ? selectors.find(s => s.id === status)?.color : undefined
-                return (
-                  <TouchableOpacity
-                    key={food.id}
-                    style={[
-                      styles.foodItem,
-                      { backgroundColor: colors.card, borderColor: colors.cardBorder },
-                      color != null && {
-                        borderColor: color,
-                        borderWidth: 2,
-                        backgroundColor: `${color}18`
-                      }
-                    ]}
-                    onPress={() => toggleFood(food.id)}>
-                    {status != null && color != null && (
-                      <View style={[styles.checkBadge, { backgroundColor: color }]}>
-                        <Check size={12} color="#ffffff" />
-                      </View>
-                    )}
-                    <Text style={[styles.foodName, { color: colors.text }, color != null && { color }]}>
-                      {food.name}
-                    </Text>
-                  </TouchableOpacity>
-                )
-              })}
-            </View>
-          </View>
-        ))}
+        <View>
+          {headerKeys.map((key) => {
+            const items = groupedIngredients[key] ?? []
+            const isOpen = openIngredientHeader === key
+            return (
+              <View key={key} style={styles.categorySection}>
+                <TouchableOpacity
+                  style={styles.categoryHeaderRow}
+                  onPress={() => setOpenIngredientHeader((v) => (v === key ? null : key))}
+                >
+                  <Text style={[styles.categoryTitle, { color: colors.textMuted }]}>
+                    {key === '#' ? 'OTHER' : key}
+                  </Text>
+                  <View style={[styles.categoryCountPill, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                    <Text style={[styles.categoryCountText, { color: colors.textMuted }]}>{items.length}</Text>
+                  </View>
+                  {isOpen
+                    ? <ChevronDown size={18} color={colors.textMuted} />
+                    : <ChevronRight size={18} color={colors.textMuted} />}
+                </TouchableOpacity>
+
+                {isOpen && (
+                  <View style={styles.foodGrid}>
+                    {items.map((group) => {
+                      const memberIds = group.memberIds
+                      const memberHasFavorite = memberIds.some(id => selectedFavoriteIds.includes(id))
+                      const memberHasDislike = memberIds.some(id => selectedDislikeIds.includes(id))
+                      const memberHasNotToday = memberIds.some(id => selectedNotTodayIds.includes(id))
+                      const status = memberHasFavorite
+                        ? 'favorite'
+                        : memberHasDislike
+                          ? 'dislike'
+                          : memberHasNotToday
+                            ? 'never_today'
+                            : null
+                      const color = status ? selectors.find(s => s.id === status)?.color : undefined
+                      return (
+                        <TouchableOpacity
+                          key={group.groupKey}
+                          style={[
+                            styles.foodItem,
+                            { backgroundColor: colors.card, borderColor: colors.cardBorder },
+                            color != null && {
+                              borderColor: color,
+                              borderWidth: 2,
+                              backgroundColor: `${color}18`
+                            }
+                          ]}
+                          onPress={() => toggleIngredientGroup(group)}
+                        >
+                          {status != null && color != null && (
+                            <View style={[styles.checkBadge, { backgroundColor: color }]}>
+                              <Check size={12} color="#ffffff" />
+                            </View>
+                          )}
+                          <Text style={[styles.foodName, { color: colors.text }, color != null && { color }]}>
+                            {group.displayName}
+                          </Text>
+                        </TouchableOpacity>
+                      )
+                    })}
+                  </View>
+                )}
+              </View>
+            )
+          })}
+        </View>
       </ScrollView>
     </View>
   )
@@ -345,13 +499,31 @@ const styles = StyleSheet.create({
   },
   dietChipText: { fontSize: 13, fontWeight: '600' },
   categorySection: { marginBottom: 24 },
+  categoryHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderWidth: 1
+  },
   categoryTitle: {
     fontSize: 12,
     fontWeight: '700',
-    letterSpacing: 1,
-    marginBottom: 12
+    letterSpacing: 1
   },
-  foodGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  categoryCountPill: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    borderWidth: 1
+  },
+  categoryCountText: {
+    fontSize: 12,
+    fontWeight: '700'
+  },
+  foodGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   foodItem: {
     position: 'relative',
     borderRadius: 8,

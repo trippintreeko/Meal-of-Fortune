@@ -8,17 +8,24 @@ import {
   Modal,
   TouchableOpacity,
   TextInput,
-  ActivityIndicator
+  ActivityIndicator,
+  Platform
 } from 'react-native'
-import { X } from 'lucide-react-native'
-import type { ThemeColors } from '@/lib/theme-colors'
-import { LIGHT_COLORS } from '@/lib/theme-colors'
-import { dateKey, parseDateKey } from '@/types/calendar'
-import DateWheelPicker from '@/components/calendar/DateWheelPicker'
+import { X, Calendar, Clock } from 'lucide-react-native'
+import DateTimePicker, { DateTimePickerAndroid, type DateTimePickerEvent } from '@react-native-community/datetimepicker'
+import { useThemeColors } from '@/hooks/useTheme'
+import { useClockFormat } from '@/hooks/useClockFormat'
 import { sanitizeText, MAX_LENGTH } from '@/lib/sanitize-input'
 
-function clamp (n: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, n))
+function formatDate (d: Date): string {
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function formatTime (d: Date, is24Hour: boolean): string {
+  if (is24Hour) {
+    return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
+  }
+  return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', hour12: true })
 }
 
 type StartVoteModalProps = {
@@ -27,7 +34,13 @@ type StartVoteModalProps = {
   onClose: () => void
   onStarted: (sessionId: string) => void
   startVotingSession: (groupId: string, deadline: string, description?: string) => Promise<string | null>
-  themeColors?: ThemeColors
+}
+
+const defaultDeadline = (): Date => {
+  const d = new Date()
+  d.setHours(20, 0, 0, 0)
+  if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1)
+  return d
 }
 
 export default function StartVoteModal ({
@@ -35,39 +48,89 @@ export default function StartVoteModal ({
   groupId,
   onClose,
   onStarted,
-  startVotingSession,
-  themeColors = LIGHT_COLORS
+  startVotingSession
 }: StartVoteModalProps) {
-  const c = themeColors
-  const now = new Date()
-  const defaultDeadline = useMemo(() => {
-    const d = new Date(now)
-    d.setHours(20, 0, 0, 0)
-    if (d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1)
-    return d
-  }, [])
-  const [deadlineDate, setDeadlineDate] = useState<string>(dateKey(defaultDeadline))
-  const [deadlineHour, setDeadlineHour] = useState<number>(defaultDeadline.getHours())
-  const [deadlineMinute, setDeadlineMinute] = useState<number>(defaultDeadline.getMinutes())
+  const colors = useThemeColors()
+  const { is24Hour } = useClockFormat()
+  const [date, setDate] = useState<Date>(defaultDeadline)
+  const [pickerStep, setPickerStep] = useState<'date' | 'time' | null>(null)
   const [description, setDescription] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!visible) return
-    setDeadlineDate(dateKey(defaultDeadline))
-    setDeadlineHour(defaultDeadline.getHours())
-    setDeadlineMinute(defaultDeadline.getMinutes())
-  }, [visible, defaultDeadline])
+    if (visible) {
+      setDate(defaultDeadline())
+      setPickerStep(null)
+    }
+  }, [visible])
 
-  const hourStr = String(clamp(deadlineHour, 0, 23))
-  const minuteStr = String(clamp(deadlineMinute, 0, 59))
+  const minDate = useMemo(() => new Date(), [])
 
-  const deadlineISO = useMemo(() => {
-    const d = parseDateKey(deadlineDate)
-    d.setHours(clamp(deadlineHour, 0, 23), clamp(deadlineMinute, 0, 59), 0, 0)
-    return d.toISOString()
-  }, [deadlineDate, deadlineHour, deadlineMinute])
+  const handlePickerChange = (event: DateTimePickerEvent, d?: Date) => {
+    if (Platform.OS === 'android') {
+      if (event.type === 'dismissed') return
+    }
+    if (event.type === 'set' && d) {
+      if (pickerStep === 'date') {
+        setDate((prev) => {
+          const next = new Date(prev)
+          next.setFullYear(d.getFullYear(), d.getMonth(), d.getDate())
+          return next
+        })
+      } else if (pickerStep === 'time') {
+        setDate((prev) => {
+          const next = new Date(prev)
+          next.setHours(d.getHours(), d.getMinutes(), 0, 0)
+          return next
+        })
+      }
+    }
+  }
+
+  const openDatePicker = () => {
+    if (Platform.OS === 'android') {
+      DateTimePickerAndroid.open({
+        value: date,
+        mode: 'date',
+        minimumDate: minDate,
+        onChange: (_, d) => {
+          if (d) {
+            setDate((prev) => {
+              const next = new Date(prev)
+              next.setFullYear(d.getFullYear(), d.getMonth(), d.getDate())
+              return next
+            })
+          }
+        }
+      })
+      return
+    }
+    setPickerStep('date')
+  }
+
+  const openTimePicker = () => {
+    if (Platform.OS === 'android') {
+      DateTimePickerAndroid.open({
+        value: date,
+        mode: 'time',
+        is24Hour,
+        onChange: (_, d) => {
+          if (d) {
+            setDate((prev) => {
+              const next = new Date(prev)
+              next.setHours(d.getHours(), d.getMinutes(), 0, 0)
+              return next
+            })
+          }
+        }
+      })
+      return
+    }
+    setPickerStep('time')
+  }
+
+  const deadlineISO = date.toISOString()
 
   const handleStart = async () => {
     setError(null)
@@ -90,94 +153,95 @@ export default function StartVoteModal ({
     }
   }
 
-  return (
-    <Modal
-      visible={visible}
-      animationType="slide"
-      transparent
-      onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={[styles.sheet, { backgroundColor: c.card }]}>
-          <View style={[styles.header, { borderBottomColor: c.border }]}>
-            <Text style={[styles.title, { color: c.text }]}>Start vote</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-              <X size={24} color={c.textMuted} />
-            </TouchableOpacity>
-          </View>
+  if (!visible) return null
 
-          <Text style={[styles.label, { color: c.textMuted }]}>Voting deadline – date</Text>
-          <DateWheelPicker
-            value={deadlineDate}
-            onChange={setDeadlineDate}
-            minYear={now.getFullYear()}
-            maxYear={now.getFullYear() + 1}
-            textColor={c.primary}
+  const content = (
+    <View style={[styles.sheet, { backgroundColor: colors.card }]}>
+      <View style={styles.header}>
+        <Text style={[styles.title, { color: colors.text }]}>Start vote</Text>
+        <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+          <X size={24} color={colors.text} />
+        </TouchableOpacity>
+      </View>
+
+      <View style={[styles.currentWrap, { backgroundColor: colors.secondaryBg }]}>
+        <Text style={[styles.currentLabel, { color: colors.textMuted }]}>
+          {formatDate(date)} at {formatTime(date, is24Hour)}
+        </Text>
+      </View>
+
+      <View style={styles.actionsRow}>
+        <TouchableOpacity
+          style={[styles.optionBtn, { backgroundColor: colors.secondaryBg, borderColor: colors.border }]}
+          onPress={openDatePicker}
+        >
+          <Calendar size={20} color={colors.primary} />
+          <Text style={[styles.optionBtnText, { color: colors.text }]}>Change date</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.optionBtn, { backgroundColor: colors.secondaryBg, borderColor: colors.border }]}
+          onPress={openTimePicker}
+        >
+          <Clock size={20} color={colors.primary} />
+          <Text style={[styles.optionBtnText, { color: colors.text }]}>Change time</Text>
+        </TouchableOpacity>
+      </View>
+
+      {Platform.OS === 'ios' && (pickerStep === 'date' || pickerStep === 'time') && (
+        <View style={styles.pickerWrap}>
+          <DateTimePicker
+            value={date}
+            mode={pickerStep === 'date' ? 'date' : 'time'}
+            display="spinner"
+            onChange={handlePickerChange}
+            is24Hour={is24Hour}
+            minimumDate={pickerStep === 'date' ? minDate : undefined}
           />
-
-          <Text style={[styles.label, { color: c.textMuted }]}>Time (any time)</Text>
-          <View style={styles.timeRow}>
-            <View style={styles.timeInputGroup}>
-              <Text style={[styles.timeInputLabel, { color: c.textMuted }]}>Hour (0–23)</Text>
-              <TextInput
-                style={[styles.timeInput, { backgroundColor: c.inputBg, borderColor: c.inputBorder, color: c.text }]}
-                value={hourStr}
-                onChangeText={(t) => {
-                  const n = parseInt(t.replace(/\D/g, ''), 10)
-                  if (t === '' || isNaN(n)) setDeadlineHour(0)
-                  else setDeadlineHour(clamp(n, 0, 23))
-                }}
-                keyboardType="number-pad"
-                maxLength={2}
-                placeholder="20"
-                placeholderTextColor={c.placeholder}
-              />
-            </View>
-            <View style={styles.timeInputGroup}>
-              <Text style={[styles.timeInputLabel, { color: c.textMuted }]}>Minute (0–59)</Text>
-              <TextInput
-                style={[styles.timeInput, { backgroundColor: c.inputBg, borderColor: c.inputBorder, color: c.text }]}
-                value={minuteStr}
-                onChangeText={(t) => {
-                  const n = parseInt(t.replace(/\D/g, ''), 10)
-                  if (t === '' || isNaN(n)) setDeadlineMinute(0)
-                  else setDeadlineMinute(clamp(n, 0, 59))
-                }}
-                keyboardType="number-pad"
-                maxLength={2}
-                placeholder="0"
-                placeholderTextColor={c.placeholder}
-              />
-            </View>
-          </View>
-          <Text style={[styles.timeHint, { color: c.textMuted }]}>
-            {deadlineHour === 0 ? 12 : deadlineHour <= 12 ? deadlineHour : deadlineHour - 12}
-            :{String(deadlineMinute).padStart(2, '0')}{' '}
-            {deadlineHour < 12 ? 'AM' : 'PM'}
-          </Text>
-
-          <Text style={[styles.label, { color: c.textMuted }]}>Description (optional)</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: c.inputBg, borderColor: c.inputBorder, color: c.text }]}
-            value={description}
-            onChangeText={setDescription}
-            placeholder="e.g. Friday dinner"
-            placeholderTextColor={c.placeholder}
-            multiline
-          />
-
-          {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-          <TouchableOpacity
-            style={[styles.confirmBtn, { backgroundColor: c.primary }, submitting && styles.confirmBtnDisabled]}
-            onPress={handleStart}
-            disabled={submitting}>
-            {submitting ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Text style={styles.confirmBtnText}>Start vote</Text>
-            )}
+          <TouchableOpacity onPress={() => setPickerStep(null)}>
+            <Text style={[styles.donePicker, { color: colors.primary }]}>Done</Text>
           </TouchableOpacity>
         </View>
+      )}
+
+      <Text style={[styles.label, { color: colors.textMuted }]}>Description (optional)</Text>
+      <TextInput
+        style={[styles.input, { backgroundColor: colors.inputBg, borderColor: colors.border, color: colors.text }]}
+        value={description}
+        onChangeText={setDescription}
+        placeholder="e.g. Friday dinner"
+        placeholderTextColor={colors.textMuted}
+        multiline
+      />
+
+      {error ? <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text> : null}
+
+      <TouchableOpacity
+        style={[styles.confirmBtn, { backgroundColor: colors.primary }, submitting && styles.confirmBtnDisabled]}
+        onPress={handleStart}
+        disabled={submitting}
+      >
+        {submitting ? (
+          <ActivityIndicator size="small" color="#fff" />
+        ) : (
+          <Text style={styles.confirmBtnText}>Start vote</Text>
+        )}
+      </TouchableOpacity>
+    </View>
+  )
+
+  if (Platform.OS === 'ios') {
+    return (
+      <Modal transparent visible={visible} animationType="slide">
+        <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={onClose} />
+        <View style={styles.iosSheet}>{content}</View>
+      </Modal>
+    )
+  }
+
+  return (
+    <Modal transparent visible={visible} animationType="fade">
+      <View style={styles.overlay}>
+        <View style={styles.androidCard}>{content}</View>
       </View>
     </Modal>
   )
@@ -186,54 +250,70 @@ export default function StartVoteModal ({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-    justifyContent: 'flex-end'
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24
   },
-  sheet: {
-    backgroundColor: '#fff',
+  iosSheet: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    paddingHorizontal: 20,
-    paddingBottom: 32,
-    maxHeight: '90%'
+    overflow: 'hidden'
+  },
+  androidCard: {
+    width: '100%',
+    maxWidth: 360,
+    borderRadius: 20,
+    overflow: 'hidden'
+  },
+  sheet: {
+    paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+    paddingHorizontal: 20
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0'
+    paddingVertical: 16
   },
-  title: { fontSize: 18, fontWeight: '700', color: '#1e293b' },
+  title: { fontSize: 18, fontWeight: '700' },
   closeBtn: { padding: 4 },
-  label: { fontSize: 14, fontWeight: '600', color: '#475569', marginTop: 12, marginBottom: 6 },
-  timeRow: { flexDirection: 'row', gap: 16 },
-  timeInputGroup: { flex: 1 },
-  timeInputLabel: { fontSize: 12, color: '#64748b', marginBottom: 4 },
-  timeInput: {
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 10,
+  currentWrap: {
     padding: 12,
-    fontSize: 18,
-    color: '#1e293b'
+    borderRadius: 10,
+    marginBottom: 16
   },
-  timeHint: { fontSize: 13, color: '#64748b', marginTop: 6 },
+  currentLabel: { fontSize: 14 },
+  actionsRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  optionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 10,
+    borderWidth: 1
+  },
+  optionBtnText: { fontSize: 14, fontWeight: '600' },
+  pickerWrap: { marginBottom: 12 },
+  donePicker: { fontSize: 16, fontWeight: '600', marginTop: 8 },
+  label: { fontSize: 14, fontWeight: '600', marginBottom: 6 },
   input: {
     borderWidth: 1,
-    borderColor: '#e2e8f0',
     borderRadius: 10,
     padding: 12,
     fontSize: 15,
-    color: '#1e293b',
     minHeight: 44
   },
-  errorText: { fontSize: 14, color: '#dc2626', marginTop: 8 },
+  errorText: { fontSize: 14, marginTop: 8 },
   confirmBtn: {
-    backgroundColor: '#22c55e',
+    paddingVertical: 14,
     borderRadius: 12,
-    padding: 16,
     alignItems: 'center',
     marginTop: 20
   },

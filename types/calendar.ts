@@ -8,9 +8,13 @@ export type SavedMeal = {
   proteinId: string
   vegetableId: string
   method: string
+  /** When saved from food gallery / recipe, links to gallery_meals.id for dedupe and heart state */
+  galleryMealId?: string | null
   seasonings?: string[]
   garnishes?: string[]
   createdAt: number
+  /** User-uploaded photo URL (from Supabase Storage or local pending sync) */
+  imageUrl?: string | null
 }
 
 /** A meal scheduled on a specific date (references SavedMeal or inline snapshot) */

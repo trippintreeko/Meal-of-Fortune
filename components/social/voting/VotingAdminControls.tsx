@@ -1,14 +1,13 @@
 'use client'
 
 import { useState } from 'react'
-import { View, Text, StyleSheet, TouchableOpacity, Alert, TextInput } from 'react-native'
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native'
 import { Clock, XCircle, CheckCircle } from 'lucide-react-native'
+import { useThemeColors } from '@/hooks/useTheme'
+import { useClockFormat } from '@/hooks/useClockFormat'
 import type { ThemeColors } from '@/lib/theme-colors'
 import { LIGHT_COLORS } from '@/lib/theme-colors'
-
-function clamp (n: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, n))
-}
+import ChangeDeadlineModal from './ChangeDeadlineModal'
 
 type VotingAdminControlsProps = {
   sessionId: string
@@ -31,42 +30,21 @@ export default function VotingAdminControls ({
   extendDeadline,
   cancelVotingSession,
   completeVotingSession,
-  themeColors = LIGHT_COLORS
+  themeColors
 }: VotingAdminControlsProps) {
-  const c = themeColors
-  const [extending, setExtending] = useState(false)
+  const c = themeColors ?? LIGHT_COLORS
+  const { is24Hour } = useClockFormat()
+  const [showDeadlineModal, setShowDeadlineModal] = useState(false)
+  const [changing, setChanging] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [closing, setClosing] = useState(false)
-  const [adjustAmount, setAdjustAmount] = useState('1')
-  const [adjustUnit, setAdjustUnit] = useState<'minutes' | 'hours'>('hours')
 
-  const applyAdjustment = (direction: 1 | -1) => {
-    const amount = clamp(parseInt(adjustAmount.replace(/\D/g, '') || '0', 10), 1, 999)
-    const msPerMinute = 60 * 1000
-    const msPerHour = 60 * msPerMinute
-    const ms = adjustUnit === 'hours' ? amount * msPerHour : amount * msPerMinute
-    const base = new Date(currentDeadline).getTime()
-    const newTime = base + direction * ms
-    const newDeadline = new Date(newTime).toISOString()
-    if (newTime <= Date.now()) {
-      Alert.alert(
-        'Past deadline',
-        'The new deadline would be in the past. Vote would effectively end now. Continue?',
-        [
-          { text: 'No', style: 'cancel' },
-          {
-            text: 'Yes',
-            onPress: () => {
-              setExtending(true)
-              extendDeadline(sessionId, newDeadline).then(onExtendDeadline).finally(() => setExtending(false))
-            }
-          }
-        ]
-      )
-      return
-    }
-    setExtending(true)
-    extendDeadline(sessionId, newDeadline).then(onExtendDeadline).finally(() => setExtending(false))
+  const handleChangeDeadlineConfirm = (newDeadline: string) => {
+    setChanging(true)
+    extendDeadline(sessionId, newDeadline)
+      .then(onExtendDeadline)
+      .catch((err) => Alert.alert('Error', err?.message ?? 'Could not update deadline'))
+      .finally(() => setChanging(false))
   }
 
   const handleClosePollPress = () => {
@@ -107,46 +85,15 @@ export default function VotingAdminControls ({
   return (
     <View style={[styles.wrapper, { backgroundColor: c.secondaryBg, borderColor: c.border }]}>
       <Text style={[styles.label, { color: c.text }]}>Admin</Text>
-      <View style={styles.adjustRow}>
-        <TextInput
-          style={[styles.amountInput, { backgroundColor: c.inputBg, borderColor: c.inputBorder, color: c.text }]}
-          value={adjustAmount}
-          onChangeText={(t) => setAdjustAmount(t.replace(/\D/g, '').slice(0, 3) || '')}
-          keyboardType="number-pad"
-          placeholder="1"
-          placeholderTextColor={c.placeholder}
-        />
-        <View style={styles.unitRow}>
-          <TouchableOpacity
-            style={[styles.unitBtn, { backgroundColor: c.border }, adjustUnit === 'minutes' && [styles.unitBtnSelected, { backgroundColor: c.primary }]]}
-            onPress={() => setAdjustUnit('minutes')}
-          >
-            <Text style={[styles.unitBtnText, { color: c.textMuted }, adjustUnit === 'minutes' && styles.unitBtnTextSelected]}>min</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.unitBtn, { backgroundColor: c.border }, adjustUnit === 'hours' && [styles.unitBtnSelected, { backgroundColor: c.primary }]]}
-            onPress={() => setAdjustUnit('hours')}
-          >
-            <Text style={[styles.unitBtnText, { color: c.textMuted }, adjustUnit === 'hours' && styles.unitBtnTextSelected]}>hr</Text>
-          </TouchableOpacity>
-        </View>
-        <TouchableOpacity
-          style={[styles.adjustBtn, styles.addBtn, extending && styles.btnDisabled]}
-          onPress={() => applyAdjustment(1)}
-          disabled={extending}
-        >
-          <Clock size={16} color="#fff" />
-          <Text style={styles.adjustBtnText}>+ Add</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.adjustBtn, styles.subtractBtn, extending && styles.btnDisabled]}
-          onPress={() => applyAdjustment(-1)}
-          disabled={extending}
-        >
-          <Text style={styles.adjustBtnText}>− Subtract</Text>
-        </TouchableOpacity>
-      </View>
       <View style={styles.row}>
+        <TouchableOpacity
+          style={[styles.btn, styles.changeDeadlineBtn, changing && styles.btnDisabled]}
+          onPress={() => setShowDeadlineModal(true)}
+          disabled={changing}
+        >
+          <Clock size={18} color="#fff" />
+          <Text style={styles.btnText}>Change deadline</Text>
+        </TouchableOpacity>
         <TouchableOpacity
           style={[styles.btn, styles.closePollBtn, closing && styles.btnDisabled]}
           onPress={handleClosePollPress}
@@ -164,44 +111,29 @@ export default function VotingAdminControls ({
           <Text style={styles.btnText}>Cancel vote</Text>
         </TouchableOpacity>
       </View>
+      <ChangeDeadlineModal
+        visible={showDeadlineModal}
+        currentDeadline={currentDeadline}
+        is24Hour={is24Hour}
+        onConfirm={handleChangeDeadlineConfirm}
+        onClose={() => setShowDeadlineModal(false)}
+      />
     </View>
   )
 }
 
 const styles = StyleSheet.create({
   wrapper: {
-    backgroundColor: '#fef3c7',
     borderRadius: 12,
     padding: 12,
     marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#fcd34d'
+    borderWidth: 1
   },
-  label: { fontSize: 12, fontWeight: '700', color: '#92400e', marginBottom: 8 },
-  adjustRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' },
-  amountInput: {
-    width: 52,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    fontSize: 15,
-    color: '#1e293b',
-    backgroundColor: '#fff'
-  },
-  unitRow: { flexDirection: 'row', gap: 4 },
-  unitBtn: { paddingVertical: 8, paddingHorizontal: 10, borderRadius: 8, backgroundColor: '#e2e8f0' },
-  unitBtnSelected: { backgroundColor: '#22c55e' },
-  unitBtnText: { fontSize: 13, fontWeight: '600', color: '#475569' },
-  unitBtnTextSelected: { color: '#fff' },
-  adjustBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
-  addBtn: { backgroundColor: '#22c55e' },
-  subtractBtn: { backgroundColor: '#0ea5e9' },
-  adjustBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  label: { fontSize: 12, fontWeight: '700', marginBottom: 8 },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   btn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8 },
-  closePollBtn: { backgroundColor: '#0ea5e9' },
+  changeDeadlineBtn: { backgroundColor: '#0ea5e9' },
+  closePollBtn: { backgroundColor: '#22c55e' },
   cancelBtn: { backgroundColor: '#dc2626' },
   btnDisabled: { opacity: 0.7 },
   btnText: { color: '#fff', fontSize: 14, fontWeight: '600' }

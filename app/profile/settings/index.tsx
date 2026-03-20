@@ -11,7 +11,8 @@ import {
   Shield,
   UserCog,
   HelpCircle,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Clock
 } from 'lucide-react-native'
 import { useThemeColors } from '@/hooks/useTheme'
 import { useSocialAuth } from '@/hooks/useSocialAuth'
@@ -63,7 +64,7 @@ export default function ProfileSettingsScreen () {
       return
     }
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.8
@@ -108,6 +109,7 @@ export default function ProfileSettingsScreen () {
 
   const sectionItems: SettingsItem[] = [
     { id: 'food-avatar', icon: ImageIcon, title: 'Choose food avatar', description: 'Use a food image as your profile picture', type: 'link', onPress: () => setFoodPickerVisible(true) },
+    { id: 'clock-format', icon: Clock, title: 'Clock format', description: '12-hour or 24-hour for time pickers', type: 'link', onPress: () => router.push('/profile/settings/clock-format') },
     { id: 'notifications', icon: Bell, title: 'Notifications', description: 'Reminders, votes, quiet hours', type: 'link', onPress: () => router.push('/profile/settings/notifications') },
     { id: 'privacy', icon: Shield, title: 'Privacy', description: 'Visibility, search, data', type: 'link', onPress: () => router.push('/profile/settings/privacy') },
     { id: 'account', icon: UserCog, title: 'Account', description: 'Email, password, 2FA, delete', type: 'link', onPress: () => router.push('/profile/settings/account') },

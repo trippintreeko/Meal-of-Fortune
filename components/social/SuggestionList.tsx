@@ -4,6 +4,7 @@ import { Swipeable } from 'react-native-gesture-handler'
 import type { ThemeColors } from '@/lib/theme-colors'
 import type { MealSuggestionWithMeta } from '@/types/social'
 import { LIGHT_COLORS } from '@/lib/theme-colors'
+import { getDisplayUsername } from '@/lib/username-display'
 
 type SuggestionListProps = {
   suggestions: MealSuggestionWithMeta[]
@@ -49,7 +50,7 @@ export default function SuggestionList ({
                 {[s.category, s.price_range].filter(Boolean).join(' · ')}
               </Text>
             )}
-            {s.username ? <Text style={[styles.by, { color: c.textMuted }]}>By {s.username}</Text> : null}
+            {s.username ? <Text style={[styles.by, { color: c.textMuted }]}>By {getDisplayUsername(s.username)}</Text> : null}
             <View style={styles.row}>
               <Text style={[styles.votes, { color: c.textMuted }]}>{s.vote_count} vote{s.vote_count !== 1 ? 's' : ''}</Text>
               <TouchableOpacity

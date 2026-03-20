@@ -52,11 +52,10 @@ export const GAME_REGISTRY: GameDefinition[] = [
   }
 ]
 
-export const GAMES_PER_SESSION = 3
+export const GAMES_PER_SESSION = 2
 
-/** Game IDs that can play base or protein_vegetable rounds (Cooking Sort only handles cooking_method) */
+/** Game IDs that can play the ingredient-collection rounds */
 const BASE_AND_PROTEIN_VEG_GAME_IDS = ['river-net', 'conveyor-belt']
-const COOKING_METHOD_GAME_ID = 'cooking-sort'
 
 /**
  * Shuffle array in place (Fisher–Yates) and return it.
@@ -70,12 +69,12 @@ function shuffle<T> (arr: T[]): T[] {
 }
 
 /**
- * Assign games per round by purpose so round 0 = base, round 1 = protein_vegetable, round 2 = cooking_method.
- * Round 0 and 1 each get a different game from river-net/conveyor-belt (no repeat); round 2 is always cooking-sort.
+ * Assign games per round for ingredient-collection rounds.
+ * Round 0 and 1 each get a different game from river-net/conveyor-belt (no repeat).
  */
 export function pickRandomGameIds (count: number = GAMES_PER_SESSION): string[] {
   const baseAndProteinVeg = shuffle([...BASE_AND_PROTEIN_VEG_GAME_IDS])
-  return [baseAndProteinVeg[0], baseAndProteinVeg[1], COOKING_METHOD_GAME_ID].slice(0, Math.min(count, GAMES_PER_SESSION))
+  return baseAndProteinVeg.slice(0, Math.min(count, GAMES_PER_SESSION))
 }
 
 export function getGameById (id: string): GameDefinition | undefined {

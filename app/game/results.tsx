@@ -7,6 +7,12 @@ import SwipeCard from '@/components/SwipeCard'
 import { getMethodDisplayPast, normalizeCookingMethodFromDb } from '@/lib/cooking-methods'
 import { useCalendarStore } from '@/store/calendar-store'
 import { useFoodPreferencesStore } from '@/store/food-preferences-store'
+import {
+  fetchFoodNamesForPreferenceIds,
+  fetchRecipeIngredientNamesMap,
+  mealViolatesDislikesOnly,
+  mergeFavoriteAppliedAllergyExcludedNames
+} from '@/lib/meal-avoid-lists'
 import { useGameSessionStore } from '@/store/game-session'
 import { Trophy } from 'lucide-react-native'
 
@@ -26,23 +32,56 @@ type GalleryMealCard = {
   vegetableId: string
   method: string
   matchCount: number
+  /** Spoonacular recipe image URL for card display */
+  imageUrl?: string | null
+}
+
+type GalleryRow = {
+  id: string
+  title: string
+  description: string | null
+  base_id: string | null
+  protein_id: string | null
+  vegetable_id: string | null
+  cooking_method: string | null
+  spoonacular_recipe_id: number | null
+}
+
+async function fetchRecipeIngredientIdsMap (recipeIds: number[]): Promise<Map<number, string[]>> {
+  const unique = [...new Set(recipeIds)].filter((id): id is number => id != null && Number.isInteger(id))
+  if (unique.length === 0) return new Map()
+  const { data, error } = await supabase
+    .from('recipe_ingredients')
+    .select('spoonacular_recipe_id, spoonacular_ingredient_id')
+    .in('spoonacular_recipe_id', unique)
+  if (error || !data) return new Map()
+
+  const byRecipe = new Map<number, Set<string>>()
+  for (const row of data as Array<{ spoonacular_recipe_id: number; spoonacular_ingredient_id: number | null }>) {
+    if (row.spoonacular_ingredient_id == null) continue
+    if (!byRecipe.has(row.spoonacular_recipe_id)) byRecipe.set(row.spoonacular_recipe_id, new Set())
+    byRecipe.get(row.spoonacular_recipe_id)!.add(String(row.spoonacular_ingredient_id))
+  }
+
+  const out = new Map<number, string[]>()
+  for (const [recipeId, set] of byRecipe.entries()) out.set(recipeId, [...set])
+  return out
 }
 
 function getFilteredGalleryMeals (
   collectedFoodIds: string[],
   selectedMethodIds: string[],
   dislikeFoodIds: string[],
-  galleryRows: Array<{
-    id: string
-    title: string
-    description: string | null
-    base_id: string | null
-    protein_id: string | null
-    vegetable_id: string | null
-    cooking_method: string | null
-  }>
-): Array<{ row: typeof galleryRows[0]; matchCount: number }> {
+  notTodayFoodIds: string[],
+  favoriteFoodIds: string[],
+  recipeIngredientIdsByRecipeId: Map<number, string[]>,
+  recipeIngredientNamesByRecipeId: Map<number, string[]>,
+  dislikeNamesNormalized: Set<string>,
+  galleryRows: GalleryRow[]
+): Array<{ row: GalleryRow; matchCount: number }> {
   const dislikeSet = new Set(dislikeFoodIds)
+  const notTodaySet = new Set(notTodayFoodIds)
+  const favoriteSet = new Set(favoriteFoodIds)
   const collectedSet = new Set(collectedFoodIds)
   const methodSet = new Set(selectedMethodIds)
 
@@ -50,11 +89,42 @@ function getFilteredGalleryMeals (
     const base = row.base_id ?? ''
     const protein = row.protein_id ?? ''
     const vegetable = row.vegetable_id ?? ''
-    if (dislikeSet.has(base) || dislikeSet.has(protein) || dislikeSet.has(vegetable)) return false
-    const matchCount = [base, protein, vegetable].filter(id => collectedSet.has(id)).length
-    if (matchCount < 2) return false
     const normalizedMethod = normalizeCookingMethodFromDb(row.cooking_method ?? undefined)
-    if (!methodSet.has(normalizedMethod)) return false
+    // If no methods were selected (round 3 hidden), don't filter by cooking method.
+    if (selectedMethodIds.length > 0 && !methodSet.has(normalizedMethod)) return false
+
+    const recipeId = row.spoonacular_recipe_id
+    const ingredientIds = recipeId != null ? recipeIngredientIdsByRecipeId.get(recipeId) ?? [] : []
+    const ingredientNamesNormalized = recipeId != null ? recipeIngredientNamesByRecipeId.get(recipeId) ?? [] : []
+
+    if (
+      mealViolatesDislikesOnly(
+        {
+          title: row.title,
+          description: row.description ?? '',
+          ingredientIds,
+          ingredientNamesNormalized,
+          base,
+          protein,
+          vegetable
+        },
+        dislikeNamesNormalized,
+        dislikeSet
+      )
+    ) {
+      return false
+    }
+
+    const matchCandidateIds = ingredientIds.length > 0 ? ingredientIds : [base, protein, vegetable]
+    const matchCount = matchCandidateIds.filter(id => collectedSet.has(id)).length
+    // OR-match: show meals that contain any ingredient the user collected.
+    if (matchCount < 1) return false
+
+    // During a game run, we also add lots of "not today" ingredients for uncollected items.
+    // That can eliminate almost every recipe unless we only block meals when they contain
+    // something the player actually collected that they also don't want today.
+    const hasNotTodayCollected = matchCandidateIds.some((id) => collectedSet.has(id) && notTodaySet.has(id))
+    if (hasNotTodayCollected) return false
     return true
   })
 
@@ -62,12 +132,20 @@ function getFilteredGalleryMeals (
     const base = row.base_id ?? ''
     const protein = row.protein_id ?? ''
     const vegetable = row.vegetable_id ?? ''
-    const matchCount = [base, protein, vegetable].filter(id => collectedSet.has(id)).length
-    return { row, matchCount }
+    const recipeId = row.spoonacular_recipe_id
+    const ingredientIds = recipeId != null ? recipeIngredientIdsByRecipeId.get(recipeId) ?? [] : []
+    const matchCandidateIds = ingredientIds.length > 0 ? ingredientIds : [base, protein, vegetable]
+    const matchCount = matchCandidateIds.filter(id => collectedSet.has(id)).length
+    const favIds = new Set<string>([base, protein, vegetable, ...ingredientIds].filter(Boolean))
+    const favoriteCount = Array.from(favIds).filter(id => favoriteSet.has(id)).length
+    return { row, matchCount, favoriteCount }
   })
 
-  scored.sort((a, b) => b.matchCount - a.matchCount)
-  return scored
+  scored.sort((a, b) => {
+    if (b.favoriteCount !== a.favoriteCount) return b.favoriteCount - a.favoriteCount
+    return b.matchCount - a.matchCount
+  })
+  return scored.map(({ row, matchCount }) => ({ row, matchCount }))
 }
 
 export default function ResultsScreen () {
@@ -76,6 +154,9 @@ export default function ResultsScreen () {
   const params = useLocalSearchParams<{ base?: string; protein?: string; vegetable?: string; method?: string }>()
   const addSavedMeal = useCalendarStore(s => s.addSavedMeal)
   const dislikeIds = useFoodPreferencesStore(s => s.dislikeIds)
+  const notTodayIds = useFoodPreferencesStore(s => s.notTodayIds)
+  const favoriteIds = useFoodPreferencesStore(s => s.favoriteIds)
+  const appliedFavoriteDietIds = useFoodPreferencesStore(s => s.appliedDietIds.favorite)
   const setNotToday = useFoodPreferencesStore(s => s.setNotToday)
   const [loading, setLoading] = useState(true)
   const [missingParams, setMissingParams] = useState(false)
@@ -107,12 +188,16 @@ export default function ResultsScreen () {
           return
         }
         const collected = [...baseIds, ...proteinIds, ...vegetableIds]
-        const methods = [...new Set((params.method ?? 'grill').split(',').map(m => normalizeCookingMethodFromDb(m.trim())))]
+        const rawMethod = (params.method ?? '').trim()
+        const methods = rawMethod
+          ? [...new Set(rawMethod.split(',').map(m => normalizeCookingMethodFromDb(m.trim())).filter(Boolean))]
+          : []
         const dislikeOnly = [...dislikeIds]
+        const notTodayOnly = [...notTodayIds]
 
         const { data: galleryData, error: galleryError } = await supabase
           .from('gallery_meals')
-          .select('id, title, description, base_id, protein_id, vegetable_id, cooking_method')
+          .select('id, title, description, base_id, protein_id, vegetable_id, cooking_method, spoonacular_recipe_id')
           .order('sort_order')
 
         if (cancelled) return
@@ -123,17 +208,44 @@ export default function ResultsScreen () {
           return
         }
 
-        const rows = (galleryData ?? []) as Array<{
-          id: string
-          title: string
-          description: string | null
-          base_id: string | null
-          protein_id: string | null
-          vegetable_id: string | null
-          cooking_method: string | null
-        }>
+        const rows = (galleryData ?? []) as GalleryRow[]
 
-        const scored = getFilteredGalleryMeals(collected, methods, dislikeOnly, rows)
+        const recipeIdsAll = [...new Set(rows.map((r) => r.spoonacular_recipe_id).filter((id): id is number => id != null))]
+        const [recipeIngredientIdsMap, recipeIngredientNamesMap, dislikeNamesBase] = await Promise.all([
+          fetchRecipeIngredientIdsMap(recipeIdsAll),
+          fetchRecipeIngredientNamesMap(recipeIdsAll),
+          fetchFoodNamesForPreferenceIds(dislikeOnly)
+        ])
+        const dislikeNamesNormalized = mergeFavoriteAppliedAllergyExcludedNames(
+          dislikeNamesBase,
+          appliedFavoriteDietIds
+        )
+
+        const scored = getFilteredGalleryMeals(
+          collected,
+          methods,
+          dislikeOnly,
+          notTodayOnly,
+          favoriteIds,
+          recipeIngredientIdsMap,
+          recipeIngredientNamesMap,
+          dislikeNamesNormalized,
+          rows
+        )
+
+        const recipeIds = [...new Set(scored.map(({ row }) => row.spoonacular_recipe_id).filter((id): id is number => id != null))]
+        const recipeImageMap = new Map<number, string>()
+        if (recipeIds.length > 0) {
+          const { data: recipeData } = await supabase
+            .from('spoonacular_recipe_details')
+            .select('spoonacular_recipe_id, image_url')
+            .in('spoonacular_recipe_id', recipeIds)
+          if (!cancelled && recipeData?.length) {
+            for (const r of recipeData as Array<{ spoonacular_recipe_id: number; image_url: string | null }>) {
+              if (r.image_url) recipeImageMap.set(r.spoonacular_recipe_id, r.image_url)
+            }
+          }
+        }
 
         const allIds = new Set<string>()
         scored.forEach(({ row }) => {
@@ -160,6 +272,7 @@ export default function ResultsScreen () {
           const vegetableDisplay = nameMap[row.vegetable_id ?? ''] ?? ''
           const fallbackDescription = [baseDisplay, proteinDisplay, vegetableDisplay].filter(Boolean).join(', ')
           const description = (row.description && row.description.trim()) ? row.description.trim() : fallbackDescription
+          const imageUrl = row.spoonacular_recipe_id != null ? recipeImageMap.get(row.spoonacular_recipe_id) ?? null : null
           return {
             id: row.id,
             title: row.title,
@@ -173,7 +286,8 @@ export default function ResultsScreen () {
             proteinId: row.protein_id ?? '',
             vegetableId: row.vegetable_id ?? '',
             method: row.cooking_method ?? 'grill',
-            matchCount
+            matchCount,
+            imageUrl: imageUrl ?? undefined
           }
         })
 
@@ -187,7 +301,7 @@ export default function ResultsScreen () {
     }
     load()
     return () => { cancelled = true }
-  }, [params.base, params.protein, params.vegetable, params.method, dislikeIds])
+  }, [params.base, params.protein, params.vegetable, params.method, dislikeIds, appliedFavoriteDietIds])
 
   const saveSelectedToStore = async (toSave: GalleryMealCard[]) => {
     if (savedToStore) return
@@ -258,7 +372,7 @@ export default function ResultsScreen () {
     return (
       <View style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
         <Text style={[styles.loadingText, { color: colors.textMuted }]}>
-          No matching meals. Try different ingredients or cooking methods.
+          No matching meals. Try different ingredients.
         </Text>
         <TouchableOpacity style={[styles.homeButton, { backgroundColor: colors.primary }]} onPress={() => router.push('/')}>
           <Text style={styles.homeButtonText}>Back to Home</Text>
@@ -318,7 +432,8 @@ export default function ResultsScreen () {
                   cardDisplay={{
                     title: card.title,
                     description: card.description || undefined,
-                    cookingMethod: card.preparedDisplay || undefined
+                    cookingMethod: card.preparedDisplay || undefined,
+                    imageUrl: card.imageUrl ?? undefined
                   }}
                   onSwipe={handleSwipe}
                   isTop={isTop}

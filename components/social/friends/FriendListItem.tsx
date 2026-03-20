@@ -8,6 +8,7 @@ import { CategoryChip } from './CategoryChip'
 import { FriendRequestActions } from './FriendRequestActions'
 import { LIGHT_COLORS } from '@/lib/theme-colors'
 import { getAvatarFoodAssetSource } from '@/lib/avatar-food-asset'
+import { getDisplayUsername } from '@/lib/username-display'
 
 type FriendListItemProps = {
   friend: FriendWithDetails
@@ -42,7 +43,7 @@ export function FriendListItem ({
           <Image source={getAvatarFoodAssetSource(friend.friend_id)} style={styles.avatarImage} resizeMode="cover" />
         </View>
         <View style={styles.info}>
-          <Text style={[styles.name, { color: c.text }]}>{friend.username}</Text>
+          <Text style={[styles.name, { color: c.text }]}>{getDisplayUsername(friend.username)}</Text>
           {friend.friend_code ? <Text style={[styles.code, { color: c.textMuted }]}>{friend.friend_code}</Text> : null}
           <View style={styles.badgeRow}>
             <View

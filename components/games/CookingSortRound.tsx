@@ -18,6 +18,12 @@ import {
 } from '@/lib/cooking-methods'
 import { supabase } from '@/lib/supabase'
 import { useFoodPreferencesStore } from '@/store/food-preferences-store'
+import {
+  fetchFoodNamesForPreferenceIds,
+  fetchRecipeIngredientNamesMap,
+  mealViolatesDislikesOnly,
+  mergeFavoriteAppliedAllergyExcludedNames
+} from '@/lib/meal-avoid-lists'
 
 type GalleryRow = {
   id: string
@@ -25,6 +31,26 @@ type GalleryRow = {
   protein_id: string | null
   vegetable_id: string | null
   cooking_method: string | null
+  spoonacular_recipe_id: number | null
+}
+
+async function fetchRecipeIngredientIdsMapForCooking (recipeIds: number[]): Promise<Map<number, string[]>> {
+  const unique = [...new Set(recipeIds)].filter((id): id is number => id != null && Number.isInteger(id))
+  if (unique.length === 0) return new Map()
+  const { data, error } = await supabase
+    .from('recipe_ingredients')
+    .select('spoonacular_recipe_id, spoonacular_ingredient_id')
+    .in('spoonacular_recipe_id', unique)
+  if (error || !data) return new Map()
+  const byRecipe = new Map<number, Set<string>>()
+  for (const row of data as Array<{ spoonacular_recipe_id: number; spoonacular_ingredient_id: number | null }>) {
+    if (row.spoonacular_ingredient_id == null) continue
+    if (!byRecipe.has(row.spoonacular_recipe_id)) byRecipe.set(row.spoonacular_recipe_id, new Set())
+    byRecipe.get(row.spoonacular_recipe_id)!.add(String(row.spoonacular_ingredient_id))
+  }
+  const out = new Map<number, string[]>()
+  for (const [recipeId, set] of byRecipe.entries()) out.set(recipeId, [...set])
+  return out
 }
 
 /** Derive collected base/protein/vegetable IDs from round 0 and 1 (same merge as getResultsForNavigation). */
@@ -51,22 +77,48 @@ function getCollectedIdsFromRounds (roundResults: (RoundResult | null)[] | undef
   return { baseIds, proteinIds, vegetableIds }
 }
 
-/** Count gallery meals for this method: method match, exclude only disliked, include if at least 2 of 3 ingredients collected. */
+/** Count gallery meals: dislikes use recipe ingredients + names (same as food gallery); match count from Spoonacular ids collected in earlier rounds. */
 function countMealsForMethod (
   method: CookingMethodId,
   collected: { baseIds: string[]; proteinIds: string[]; vegetableIds: string[] },
   dislikeSet: Set<string>,
-  rows: GalleryRow[]
+  dislikeNames: Set<string>,
+  rows: GalleryRow[],
+  recipeIngredientIdsByRecipeId: Map<number, string[]>,
+  recipeIngredientNamesByRecipeId: Map<number, string[]>
 ): number {
-  const baseSet = new Set(collected.baseIds)
-  const proteinSet = new Set(collected.proteinIds)
-  const vegetableSet = new Set(collected.vegetableIds)
+  const collectedSet = new Set([...collected.baseIds, ...collected.proteinIds, ...collected.vegetableIds])
   return rows.filter(row => {
     const base = row.base_id ?? ''
     const protein = row.protein_id ?? ''
     const vegetable = row.vegetable_id ?? ''
-    if (dislikeSet.has(base) || dislikeSet.has(protein) || dislikeSet.has(vegetable)) return false
-    const matchCount = [baseSet.has(base), proteinSet.has(protein), vegetableSet.has(vegetable)].filter(Boolean).length
+    const recipeId = row.spoonacular_recipe_id
+    const ingredientIds = recipeId != null ? recipeIngredientIdsByRecipeId.get(recipeId) ?? [] : []
+    const ingredientNamesNormalized = recipeId != null ? recipeIngredientNamesByRecipeId.get(recipeId) ?? [] : []
+
+    if (
+      mealViolatesDislikesOnly(
+        {
+          ingredientIds,
+          ingredientNamesNormalized,
+          base,
+          protein,
+          vegetable
+        },
+        dislikeNames,
+        dislikeSet
+      )
+    ) {
+      return false
+    }
+
+    const matchCount = ingredientIds.length > 0
+      ? ingredientIds.filter((id) => collectedSet.has(id)).length
+      : [
+          collectedSet.has(base),
+          collectedSet.has(protein),
+          collectedSet.has(vegetable)
+        ].filter(Boolean).length
     if (matchCount < 2) return false
     const normalized = normalizeCookingMethodFromDb(row.cooking_method ?? undefined)
     return normalized === method
@@ -83,6 +135,7 @@ export default function CookingSortRound ({
   const [selected, setSelected] = useState<Set<CookingMethodId>>(new Set())
   const [mealCountByMethod, setMealCountByMethod] = useState<Record<string, number> | null>(null)
   const dislikeIds = useFoodPreferencesStore(s => s.dislikeIds)
+  const appliedFavoriteDietIds = useFoodPreferencesStore(s => s.appliedDietIds.favorite)
 
   const totalAllMethods = useMemo(() => {
     if (!mealCountByMethod) return 0
@@ -129,7 +182,7 @@ export default function CookingSortRound ({
     async function load () {
       const { data, error } = await supabase
         .from('gallery_meals')
-        .select('id, base_id, protein_id, vegetable_id, cooking_method')
+        .select('id, base_id, protein_id, vegetable_id, cooking_method, spoonacular_recipe_id')
         .order('sort_order')
       if (cancelled) return
       if (error) {
@@ -137,15 +190,30 @@ export default function CookingSortRound ({
         return
       }
       const rows = (data ?? []) as GalleryRow[]
+      const recipeIds = [...new Set(rows.map((r) => r.spoonacular_recipe_id).filter((id): id is number => id != null))]
+      const [recipeIdsMap, recipeNamesMap, dislikeNames] = await Promise.all([
+        fetchRecipeIngredientIdsMapForCooking(recipeIds),
+        fetchRecipeIngredientNamesMap(recipeIds),
+        fetchFoodNamesForPreferenceIds([...dislikeIds])
+      ])
+      if (cancelled) return
       const counts: Record<string, number> = {}
       for (const method of MEAL_COOKING_METHODS) {
-        counts[method] = countMealsForMethod(method, collectedIds, dislikeSet, rows)
+        counts[method] = countMealsForMethod(
+          method,
+          collectedIds,
+          dislikeSet,
+          dislikeNames,
+          rows,
+          recipeIdsMap,
+          recipeNamesMap
+        )
       }
       setMealCountByMethod(counts)
     }
     load()
     return () => { cancelled = true }
-  }, [roundPurpose, roundResults, dislikeIds])
+  }, [roundPurpose, roundResults, dislikeIds, appliedFavoriteDietIds])
 
   const toggleMethod = useCallback((method: CookingMethodId) => {
     setSelected(prev => {

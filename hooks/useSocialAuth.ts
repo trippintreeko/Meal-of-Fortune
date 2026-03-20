@@ -4,6 +4,11 @@ import { supabase } from '@/lib/supabase'
 import type { UserProfile } from '@/types/social'
 import type { Session } from '@supabase/supabase-js'
 
+function isInvalidRefreshTokenError (err: unknown): boolean {
+  const msg = err && typeof err === 'object' && 'message' in err ? String((err as { message: unknown }).message) : ''
+  return /invalid refresh token|refresh token not found/i.test(msg)
+}
+
 function getEmailRedirectTo (): string {
   const env = (process.env.EXPO_PUBLIC_EMAIL_CONFIRM_REDIRECT_URL as string | undefined)?.trim()
   if (env) return env
@@ -31,11 +36,20 @@ export function useSocialAuth () {
   }, [])
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s)
-      if (s?.user?.id) void fetchProfile(s.user.id)
-      setLoading(false)
-    })
+    supabase.auth.getSession()
+      .then(({ data: { session: s } }) => {
+        setSession(s)
+        if (s?.user?.id) void fetchProfile(s.user.id)
+        setLoading(false)
+      })
+      .catch((err) => {
+        if (isInvalidRefreshTokenError(err)) {
+          void supabase.auth.signOut()
+          setSession(null)
+          setProfile(null)
+        }
+        setLoading(false)
+      })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
       setSession(s)

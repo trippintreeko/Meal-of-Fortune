@@ -14,9 +14,7 @@ import {
 import type { RoundGameProps } from '@/lib/game-registry'
 import type { RoundResult } from '@/types/game-session'
 import { supabase } from '@/lib/supabase'
-import { getFoodAsset } from '@/lib/food-asset-mapping'
-import { getFoodAssetSource } from '@/lib/food-asset-registry'
-import { filterSpawnableFoodItems } from '@/lib/food-asset-mapping'
+import { useFoodPreferencesStore } from '@/store/food-preferences-store'
 
 const { width: SW, height: SH } = Dimensions.get('window')
 const GAME_DURATION_SEC = 30
@@ -31,16 +29,13 @@ const HEADER_H = 48
 const BELT4_LEFT = 0
 const BELT4_RIGHT = SW / 2
 
-const FALLBACK_BASE_ID = '11111111-1111-1111-1111-111111111101'
-const FALLBACK_PROTEIN_ID = '22222222-2222-2222-2222-222222222201'
-const FALLBACK_VEG_ID = '33333333-3333-3333-3333-333333333301'
-
 type BeltIndex = 1 | 2 | 3 | 4
 type Rank = 0 | 1 | 2 | 3
 
 type BeltItem = {
   id: string
   foodId: string
+  imageUrl: string | null
   name: string
   category: string
   belt: BeltIndex
@@ -97,7 +92,9 @@ export default function ConveyorBeltRound ({
   mealType,
   onComplete
 }: RoundGameProps) {
-  const [foodPool, setFoodPool] = useState<{ id: string; name: string; category: string }[]>([])
+  const dislikeIds = useFoodPreferencesStore(s => s.dislikeIds)
+  const notTodayIds = useFoodPreferencesStore(s => s.notTodayIds)
+  const [foodPool, setFoodPool] = useState<{ id: string; name: string; imageUrl: string | null; category: string }[]>([])
   const [items, setItems] = useState<BeltItem[]>([])
   const [timeLeft, setTimeLeft] = useState(GAME_DURATION_SEC)
   const [gameOver, setGameOver] = useState(false)
@@ -110,8 +107,13 @@ export default function ConveyorBeltRound ({
   const spawnRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const nextIdRef = useRef(0)
   const rankedRef = useRef<{ foodId: string; category: string; rank: Rank }[]>([])
+  const fallbackIdsRef = useRef<{ base: string | null; protein: string | null; vegetable: string | null }>({
+    base: null,
+    protein: null,
+    vegetable: null
+  })
   /** One spawn per food item: shuffled queue of pool items not yet spawned */
-  const spawnQueueRef = useRef<{ id: string; name: string; category: string }[]>([])
+  const spawnQueueRef = useRef<{ id: string; name: string; imageUrl: string | null; category: string }[]>([])
   const containerScreenRef = useRef({ x: 0, y: 0 })
   const gameAreaRef = useRef<View>(null)
   const itemsRef = useRef<BeltItem[]>([])
@@ -120,6 +122,7 @@ export default function ConveyorBeltRound ({
   draggingRef.current = dragging
 
   const finishGame = useCallback(() => {
+    const fb = fallbackIdsRef.current
     if (timerRef.current) clearInterval(timerRef.current)
     if (tickRef.current) clearInterval(tickRef.current)
     if (spawnRef.current) clearInterval(spawnRef.current)
@@ -139,9 +142,9 @@ export default function ConveyorBeltRound ({
             const garnishIds = rank2Or3.filter(r => r.category === 'garnish').map(r => r.foodId)
             return {
               purpose: 'all_ingredients' as const,
-              baseIds: baseIds.length > 0 ? baseIds : [FALLBACK_BASE_ID],
-              proteinIds: proteinIds.length > 0 ? proteinIds : [FALLBACK_PROTEIN_ID],
-              vegetableIds: vegetableIds.length > 0 ? vegetableIds : [FALLBACK_VEG_ID],
+              baseIds: baseIds.length > 0 ? baseIds : [fb.base ?? ''],
+              proteinIds: proteinIds.length > 0 ? proteinIds : [fb.protein ?? ''],
+              vegetableIds: vegetableIds.length > 0 ? vegetableIds : [fb.vegetable ?? ''],
               seasoningIds,
               garnishIds
             }
@@ -149,7 +152,7 @@ export default function ConveyorBeltRound ({
         : roundPurpose === 'base'
           ? {
               purpose: 'base',
-              baseIds: rank2Or3.length > 0 ? rank2Or3.map(r => r.foodId) : [FALLBACK_BASE_ID]
+              baseIds: rank2Or3.length > 0 ? rank2Or3.map(r => r.foodId) : [fb.base ?? '']
             }
           : roundPurpose === 'protein_vegetable'
             ? (() => {
@@ -157,8 +160,8 @@ export default function ConveyorBeltRound ({
                 const vegetableIds = rank2Or3.filter(r => r.category === 'vegetable').map(r => r.foodId)
                 return {
                   purpose: 'protein_vegetable' as const,
-                  proteinIds: proteinIds.length > 0 ? proteinIds : [FALLBACK_PROTEIN_ID],
-                  vegetableIds: vegetableIds.length > 0 ? vegetableIds : [FALLBACK_VEG_ID]
+                  proteinIds: proteinIds.length > 0 ? proteinIds : [fb.protein ?? ''],
+                  vegetableIds: vegetableIds.length > 0 ? vegetableIds : [fb.vegetable ?? '']
                 }
               })()
             : { purpose: 'cooking_method', method: 'grilled' }
@@ -167,69 +170,89 @@ export default function ConveyorBeltRound ({
   }, [roundPurpose, onComplete])
 
   useEffect(() => {
-    if (roundPurpose === 'all_ingredients') {
-      let cancelled = false
-      Promise.all([
-        supabase.from('food_items').select('id, name, category').eq('category', 'base').order('name'),
-        supabase.from('food_items').select('id, name, category').eq('category', 'protein').order('name'),
-        supabase.from('food_items').select('id, name, category').eq('category', 'vegetable').order('name'),
-        supabase.from('food_items').select('id, name, category').eq('category', 'seasoning').order('name'),
-        supabase.from('food_items').select('id, name, category').eq('category', 'garnish').order('name')
-      ]).then(([b, p, v, s, g]) => {
-        if (cancelled) return
-        const list: { id: string; name: string; category: string }[] = []
-        if (b.data?.length) list.push(...b.data.map(r => ({ id: r.id, name: r.name, category: r.category || 'base' })))
-        if (p.data?.length) list.push(...p.data.map(r => ({ id: r.id, name: r.name, category: r.category || 'protein' })))
-        if (v.data?.length) list.push(...v.data.map(r => ({ id: r.id, name: r.name, category: r.category || 'vegetable' })))
-        if (s.data?.length) list.push(...s.data.map(r => ({ id: r.id, name: r.name, category: r.category || 'seasoning' })))
-        if (g.data?.length) list.push(...g.data.map(r => ({ id: r.id, name: r.name, category: r.category || 'garnish' })))
-        if (list.length === 0) list.push({ id: FALLBACK_BASE_ID, name: 'Rice', category: 'base' }, { id: FALLBACK_PROTEIN_ID, name: 'Chicken', category: 'protein' }, { id: FALLBACK_VEG_ID, name: 'Broccoli', category: 'vegetable' })
-        const spawnable = filterSpawnableFoodItems(list)
-        setFoodPool(spawnable.length > 0 ? spawnable : list)
+    let cancelled = false
+    void (async () => {
+      if (roundPurpose === 'cooking_method') {
         setReady(true)
-      })
-      return () => { cancelled = true }
-    }
-    if (roundPurpose === 'base') {
-      let cancelled = false
-      supabase
-        .from('food_items')
-        .select('id, name, category')
-        .eq('category', 'base')
-        .order('name')
-        .then(({ data, error }) => {
-          if (cancelled) return
-          if (error || !data?.length) {
-            setFoodPool([{ id: FALLBACK_BASE_ID, name: 'Rice', category: 'base' }])
-          } else {
-            setFoodPool(data.map(r => ({ id: r.id, name: r.name, category: r.category || 'base' })))
-          }
+        setGameOver(true)
+        setTimeout(() => onComplete({ purpose: 'cooking_method', method: 'grilled' }), 0)
+        return
+      }
+
+      try {
+        const { data, error } = await supabase
+          .from('ingredient_assets')
+          .select('spoonacular_ingredient_id, name, image_url')
+          .order('name')
+        if (cancelled) return
+        if (error || !data?.length) {
+          setFoodPool([])
           setReady(true)
-        })
-      return () => { cancelled = true }
-    }
-    if (roundPurpose === 'protein_vegetable') {
-      let cancelled = false
-      Promise.all([
-        supabase.from('food_items').select('id, name, category').eq('category', 'protein').order('name'),
-        supabase.from('food_items').select('id, name, category').eq('category', 'vegetable').order('name')
-      ]).then(([p, v]) => {
-        if (cancelled) return
-        const list: { id: string; name: string; category: string }[] = []
-        if (p.data?.length) list.push(...p.data.map(r => ({ id: r.id, name: r.name, category: r.category || 'protein' })))
-        if (v.data?.length) list.push(...v.data.map(r => ({ id: r.id, name: r.name, category: r.category || 'vegetable' })))
-        if (list.length === 0) list.push({ id: FALLBACK_PROTEIN_ID, name: 'Chicken', category: 'protein' }, { id: FALLBACK_VEG_ID, name: 'Broccoli', category: 'vegetable' })
-        setFoodPool(list)
+          return
+        }
+
+        const avoidIngredientIds = new Set([...dislikeIds, ...notTodayIds])
+
+        if (roundPurpose === 'all_ingredients') {
+          const catOrder = ['base', 'protein', 'vegetable', 'seasoning', 'garnish'] as const
+          const list = (data ?? []).map((r, idx) => ({
+            id: String(r.spoonacular_ingredient_id),
+            name: r.name,
+            imageUrl: r.image_url ?? null,
+            category: catOrder[idx % catOrder.length]
+          }))
+          const filtered = list.filter((it) => !avoidIngredientIds.has(it.id))
+          fallbackIdsRef.current = {
+            base: filtered.find((x) => x.category === 'base')?.id ?? null,
+            protein: filtered.find((x) => x.category === 'protein')?.id ?? null,
+            vegetable: filtered.find((x) => x.category === 'vegetable')?.id ?? null
+          }
+          setFoodPool(filtered)
+          setReady(true)
+          return
+        }
+
+        if (roundPurpose === 'protein_vegetable') {
+          const list = (data ?? []).map((r, idx) => ({
+            id: String(r.spoonacular_ingredient_id),
+            name: r.name,
+            imageUrl: r.image_url ?? null,
+            category: idx % 2 === 0 ? 'protein' : 'vegetable'
+          }))
+          const filtered = list.filter((it) => !avoidIngredientIds.has(it.id))
+          fallbackIdsRef.current = {
+            base: null,
+            protein: filtered.find((x) => x.category === 'protein')?.id ?? null,
+            vegetable: filtered.find((x) => x.category === 'vegetable')?.id ?? null
+          }
+          setFoodPool(filtered)
+          setReady(true)
+          return
+        }
+
+        // roundPurpose === 'base'
+        const list = (data ?? []).map((r) => ({
+          id: String(r.spoonacular_ingredient_id),
+          name: r.name,
+          imageUrl: r.image_url ?? null,
+          category: 'base'
+        }))
+        const filtered = list.filter((it) => !avoidIngredientIds.has(it.id))
+        fallbackIdsRef.current = {
+          base: filtered[0]?.id ?? null,
+          protein: null,
+          vegetable: null
+        }
+        setFoodPool(filtered)
         setReady(true)
-      })
-      return () => { cancelled = true }
-    }
-    if (roundPurpose === 'cooking_method') {
-      setReady(true)
-      setGameOver(true)
-      setTimeout(() => onComplete({ purpose: 'cooking_method', method: 'grilled' }), 0)
-    }
-  }, [roundPurpose, onComplete])
+      } catch {
+        if (cancelled) return
+        setFoodPool([])
+        setReady(true)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [roundPurpose, onComplete, dislikeIds, notTodayIds])
 
   useEffect(() => {
     if (!ready || !gameStarted || gameOver || foodPool.length === 0) return
@@ -254,6 +277,7 @@ export default function ConveyorBeltRound ({
           id: `cb-${nextIdRef.current++}`,
           foodId: item.id,
           name: item.name,
+          imageUrl: item.imageUrl,
           category: item.category,
           belt: 1 as BeltIndex,
           x: SW + ITEM_RADIUS
@@ -434,22 +458,22 @@ export default function ConveyorBeltRound ({
         {items.map(it => {
           if (dragging?.item.id === it.id) return null
           const { mid } = getBeltY(it.belt)
-          const assetKey = getFoodAsset(it.foodId, it.name, (it.category || 'base') as 'base' | 'protein' | 'vegetable')
-          const source = getFoodAssetSource(assetKey)
+          const source = it.imageUrl ? { uri: it.imageUrl } : null
           return (
             <View
               key={it.id}
               style={[styles.itemCircle, { left: it.x - ITEM_RADIUS, top: mid - ITEM_RADIUS }]}
               pointerEvents="none"
             >
-              <Image source={source} style={styles.itemImage} resizeMode="contain" />
+              {source
+                ? <Image source={source} style={styles.itemImage} resizeMode="contain" />
+                : <View style={styles.itemImageFallback} />}
             </View>
           )
         })}
 
         {dragging && (() => {
-          const assetKey = getFoodAsset(dragging.item.foodId, dragging.item.name, (dragging.item.category || 'base') as 'base' | 'protein' | 'vegetable')
-          const source = getFoodAssetSource(assetKey)
+          const source = dragging.item.imageUrl ? { uri: dragging.item.imageUrl } : null
           return (
             <View
               style={[
@@ -459,7 +483,9 @@ export default function ConveyorBeltRound ({
               ]}
               pointerEvents="none"
             >
-              <Image source={source} style={styles.itemImage} resizeMode="contain" />
+              {source
+                ? <Image source={source} style={styles.itemImage} resizeMode="contain" />
+                : <View style={styles.itemImageFallback} />}
             </View>
           )
         })()}
@@ -605,6 +631,12 @@ const styles = StyleSheet.create({
   itemImage: {
     width: ITEM_RADIUS * 2 - 4,
     height: ITEM_RADIUS * 2 - 4
+  },
+  itemImageFallback: {
+    width: ITEM_RADIUS * 2 - 4,
+    height: ITEM_RADIUS * 2 - 4,
+    borderRadius: ITEM_RADIUS,
+    backgroundColor: 'rgba(255,255,255,0.25)'
   },
   draggingItem: {
     zIndex: 100
