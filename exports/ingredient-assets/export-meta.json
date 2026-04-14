@@ -1,0 +1,15 @@
+{
+  "format_version": 1,
+  "exported_at": "2026-03-23T20:21:37.136Z",
+  "supabase_url": "https://xeucxcfsrxiytajlaskq.supabase.co",
+  "storage_bucket": "ingredient-images",
+  "db_table": "ingredient_assets",
+  "db_id_column": "spoonacular_ingredient_id",
+  "db_url_column": "image_url",
+  "row_uuid_column": "id",
+  "notes": [
+    "Files under images/ use the same object key as Storage (storage_path).",
+    "Re-upload: npm run upload-ingredient-assets (needs SUPABASE_SERVICE_ROLE_KEY).",
+    "If you export PNG after edits, name files {spoonacular_ingredient_id}.png — upload script resolves by id."
+  ]
+}

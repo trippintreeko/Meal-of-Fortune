@@ -46,7 +46,7 @@ export default function SetNewPasswordScreen () {
 
   const goToSocial = () => {
     setSuccess(false)
-    router.replace('/social/groups')
+    router.replace('/')
   }
 
   return (

@@ -35,6 +35,24 @@ function clean (v) {
   return String(v || '').trim().replace(/\s+/g, ' ')
 }
 
+/** Same logic as spoonacular-match-and-save: prefer analyzed steps when HTML is one blob. */
+function getInstructionsText (recipe) {
+  const steps = recipe.analyzedInstructions?.[0]?.steps
+  const fromAnalyzed =
+    Array.isArray(steps) && steps.length > 0
+      ? steps.map((s, i) => `${i + 1}. ${String(s.step || '').trim()}`).filter(Boolean).join('\n\n')
+      : null
+  const instr = recipe.instructions && String(recipe.instructions).trim()
+    ? String(recipe.instructions).trim()
+    : null
+  if (!fromAnalyzed) return instr
+  if (!instr) return fromAnalyzed
+  const analyzedBlocks = fromAnalyzed.split(/\n\n/).filter(Boolean).length
+  const liCount = (instr.match(/<li[\s>]/gi) || []).length
+  if (analyzedBlocks >= 2 && liCount < 2) return fromAnalyzed
+  return instr
+}
+
 function uniqNames (items) {
   const seen = new Set()
   const out = []
@@ -269,7 +287,7 @@ async function main () {
     detailRows.push({
       spoonacular_recipe_id: rid,
       title,
-      instructions: clean(recipe.instructions) || null,
+      instructions: (getInstructionsText(recipe) || '').trim() || null,
       servings: Number.isFinite(recipe.servings) ? Number(recipe.servings) : null,
       ready_in_minutes: Number.isFinite(recipe.readyInMinutes) ? Number(recipe.readyInMinutes) : null,
       image_url: recipe.image || null,

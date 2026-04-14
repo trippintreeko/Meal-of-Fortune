@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useCallback } from 'react'
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { ChevronLeft } from 'lucide-react-native'
@@ -6,9 +6,12 @@ import { useGameSessionStore, ROUND_INDEX_TO_PURPOSE, TOTAL_ROUNDS } from '@/sto
 import { useFoodPreferencesStore } from '@/store/food-preferences-store'
 import { getGameById } from '@/lib/game-registry'
 import { supabase } from '@/lib/supabase'
+import { buildIngredientGroupIndex, expandIdsByIngredientGroups } from '@/lib/ingredient-grouping'
 import type { RoundPurpose } from '@/types/game-session'
 import type { MealType, RoundResult } from '@/types/game-session'
 import { useSystemBack } from '@/hooks/useSystemBack'
+import GameRoundErrorBoundary from '@/components/games/GameRoundErrorBoundary'
+import { clearGameAddedNotTodayFromPreferences } from '@/store/game-session'
 
 function getCollectedIdsFromRound (r: RoundResult | null): string[] {
   if (r?.purpose !== 'all_ingredients') return []
@@ -24,40 +27,13 @@ export default function RoundScreen () {
   const rawIndex = params.index ?? '0'
   const roundIndex = Math.max(0, Math.min(TOTAL_ROUNDS - 1, parseInt(String(rawIndex), 10)))
   const { mealType, gameIds, setRoundResult, setGameAddedNotTodayIds, getResultsForNavigation, roundResults } = useGameSessionStore()
-  const markNotCollectedDoneRef = useRef(false)
 
   const handleBackToHome = useCallback(() => {
+    void clearGameAddedNotTodayFromPreferences()
     ;(router.replace as (href: string) => void)('/')
   }, [router])
 
   useSystemBack(handleBackToHome)
-
-  useEffect(() => {
-    if (roundIndex !== TOTAL_ROUNDS - 1 || markNotCollectedDoneRef.current) return
-    const r0 = roundResults[0]
-    const r1 = roundResults[1]
-    const collected = new Set([
-      ...getCollectedIdsFromRound(r0),
-      ...getCollectedIdsFromRound(r1)
-    ])
-    let cancelled = false
-    void (async () => {
-      const { data, error } = await supabase
-        .from('ingredient_assets')
-        .select('spoonacular_ingredient_id')
-      if (cancelled) return
-      if (error) return
-      const allSpawnable = (data ?? []).map((r) => String(r.spoonacular_ingredient_id))
-      const notCollected = allSpawnable.filter((id) => !collected.has(id))
-      if (notCollected.length === 0) return
-      markNotCollectedDoneRef.current = true
-      setGameAddedNotTodayIds(notCollected)
-      const { notTodayIds, setNotToday } = useFoodPreferencesStore.getState()
-      const merged = [...new Set([...notTodayIds, ...notCollected])]
-      void setNotToday(merged)
-    })()
-    return () => { cancelled = true }
-  }, [roundIndex, roundResults])
 
   const gameId = gameIds[roundIndex]
   const roundPurpose = ROUND_INDEX_TO_PURPOSE[roundIndex] ?? 'base'
@@ -65,18 +41,59 @@ export default function RoundScreen () {
   const GameComponent = game?.component
 
   const handleComplete = (result: RoundResult) => {
-    setRoundResult(roundIndex, result)
     const nextIndex = roundIndex + 1
+    const nextRoundResults = [...roundResults]
+    nextRoundResults[roundIndex] = result
+
+    setRoundResult(roundIndex, result)
+
     if (nextIndex < TOTAL_ROUNDS) {
       ;(router.replace as (href: string) => void)(`/game/round/${nextIndex}`)
-    } else {
+      return
+    }
+
+    // This is the last round: populate "not today" for uncollected ingredients
+    // *after* the player finished collecting, so the last ingredient round
+    // does not get artificially restricted.
+    void (async () => {
+      try {
+        const r0 = nextRoundResults[0]
+        const r1 = nextRoundResults[1]
+        const collected = new Set([
+          ...getCollectedIdsFromRound(r0),
+          ...getCollectedIdsFromRound(r1)
+        ])
+
+        const { data, error } = await supabase
+          .from('ingredient_assets')
+          .select('spoonacular_ingredient_id, name')
+
+        if (!error && data?.length) {
+          const rows = data as Array<{ spoonacular_ingredient_id: number; name: string | null }>
+          const index = buildIngredientGroupIndex(rows)
+          const expandedCollected = new Set(expandIdsByIngredientGroups(Array.from(collected), index))
+
+          const allSpawnable = rows.map((r) => String(r.spoonacular_ingredient_id))
+          const notCollected = allSpawnable.filter((id) => !expandedCollected.has(id))
+
+          if (notCollected.length > 0) {
+            await setGameAddedNotTodayIds(notCollected)
+            const { notTodayIds, setNotToday } = useFoodPreferencesStore.getState()
+            const merged = [...new Set([...notTodayIds, ...notCollected])]
+            await setNotToday(merged)
+          }
+        }
+      } catch {
+        // If "not today" fails, keep gameplay/results functioning with whatever is already in the store.
+      }
+
       const navParams = getResultsForNavigation()
       if (navParams) {
         router.replace({ pathname: '/game/results', params: navParams })
       } else {
         router.replace('/')
       }
-    }
+    })()
   }
 
   if (mealType == null || !GameComponent) {
@@ -94,40 +111,41 @@ export default function RoundScreen () {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={handleBackToHome}>
-          <ChevronLeft size={24} color="#1e293b" />
-        </TouchableOpacity>
-        <Text style={styles.title}>
-          Round {roundIndex + 1} of {TOTAL_ROUNDS}
-        </Text>
-        <Text style={styles.subtitle}>{game?.name ?? gameId}</Text>
-      </View>
-      <GameComponent
-        roundPurpose={roundPurpose as RoundPurpose}
-        mealType={mealType as MealType}
-        onComplete={handleComplete}
-        roundResults={roundResults}
-      />
+      <TouchableOpacity style={styles.backButtonFloating} onPress={handleBackToHome} accessibilityRole="button" accessibilityLabel="Back">
+        <ChevronLeft size={24} color="#1e293b" />
+      </TouchableOpacity>
+      <GameRoundErrorBoundary
+        onExit={() => {
+          void clearGameAddedNotTodayFromPreferences()
+          ;(router.replace as (href: string) => void)('/')
+        }}
+      >
+        <GameComponent
+          roundPurpose={roundPurpose as RoundPurpose}
+          mealType={mealType as MealType}
+          onComplete={handleComplete}
+          roundResults={roundResults}
+        />
+      </GameRoundErrorBoundary>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
-  header: {
-    flexDirection: 'row',
+  backButtonFloating: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    zIndex: 200,
+    elevation: 20,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.92)',
     alignItems: 'center',
-    paddingTop: 16,
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0'
+    justifyContent: 'center'
   },
-  backButton: { marginRight: 12 },
-  title: { fontSize: 18, fontWeight: '700', color: '#1e293b' },
-  subtitle: { fontSize: 14, color: '#64748b', marginLeft: 8 },
   errorText: { fontSize: 16, color: '#64748b', textAlign: 'center', padding: 24 },
   backBtn: { marginTop: 16, alignSelf: 'center' },
   backBtnText: { fontSize: 16, fontWeight: '600', color: '#22c55e' }

@@ -108,7 +108,7 @@ export default function AuthCallbackScreen () {
 
   const goToSocial = () => {
     setEmailVerified(false)
-    router.replace('/social/groups')
+    router.replace('/')
   }
 
   return (

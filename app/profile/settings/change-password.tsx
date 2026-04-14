@@ -1,44 +1,60 @@
-'use client'
+ 'use client'
 
-import { useState } from 'react'
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Alert, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native'
+import { useState, useMemo, useCallback } from 'react'
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native'
+import * as Linking from 'expo-linking'
 import { useRouter } from 'expo-router'
 import { ChevronLeft } from 'lucide-react-native'
 import { useThemeColors } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
-
-const MIN_PASSWORD_LENGTH = 6
+import { useSocialAuth } from '@/hooks/useSocialAuth'
 
 export default function ChangePasswordScreen () {
   const router = useRouter()
   const colors = useThemeColors()
-  const [password, setPassword] = useState('')
-  const [confirm, setConfirm] = useState('')
-  const [loading, setLoading] = useState(false)
+  const { profile } = useSocialAuth()
 
-  const handleSubmit = async () => {
-    const p = password.trim()
-    const c = confirm.trim()
-    if (!p) {
-      Alert.alert('Required', 'Enter a new password.')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [sent, setSent] = useState(false)
+
+  const email = useMemo(() => profile?.email?.trim() || '', [profile?.email])
+
+  const handleSendResetEmail = useCallback(async () => {
+    setError(null)
+    if (!email) {
+      Alert.alert('Missing email', 'Your email address is required to send a password reset link.')
       return
     }
-    if (p.length < MIN_PASSWORD_LENGTH) {
-      Alert.alert('Too short', `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`)
-      return
-    }
-    if (p !== c) {
-      Alert.alert('Mismatch', 'Passwords do not match.')
-      return
-    }
+
     setLoading(true)
-    const { error } = await supabase.auth.updateUser({ password: p })
+    const webRedirect =
+      (process.env.EXPO_PUBLIC_EMAIL_CONFIRM_REDIRECT_URL as string | undefined)?.trim()
+      || (process.env.EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL as string | undefined)?.trim()
+    const devRedirect = __DEV__ ? 'http://localhost:8081/social/auth-callback' : null
+    // For native apps, always use the deep link so Supabase tokens survive the redirect.
+    const appRedirect = devRedirect || Linking.createURL('social/auth-callback')
+    const redirectTo = Platform.OS === 'web' ? (webRedirect || appRedirect) : appRedirect
+
+    const { error: e } = await supabase.auth.resetPasswordForEmail(email, { redirectTo })
     setLoading(false)
-    if (error) {
-      Alert.alert('Error', error.message)
+
+    if (e) {
+      setError(e.message)
       return
     }
-    Alert.alert('Password updated', 'Your password has been changed.', [{ text: 'OK', onPress: () => router.back() }])
+
+    setSent(true)
+  }, [email])
+
+  if (!profile) {
+    return (
+      <KeyboardAvoidingView style={[styles.container, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+      </KeyboardAvoidingView>
+    )
   }
 
   return (
@@ -50,31 +66,29 @@ export default function ChangePasswordScreen () {
         <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>Change password</Text>
         <View style={styles.headerSpacer} />
       </View>
+
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-        <Text style={[styles.hint, { color: colors.textMuted }]}>Choose a new password (at least {MIN_PASSWORD_LENGTH} characters).</Text>
-        <TextInput
-          style={[styles.input, { backgroundColor: colors.card, borderColor: colors.cardBorder, color: colors.text }]}
-          placeholder="New password"
-          placeholderTextColor={colors.textMuted}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          autoCapitalize="none"
-          editable={!loading}
-        />
-        <TextInput
-          style={[styles.input, { backgroundColor: colors.card, borderColor: colors.cardBorder, color: colors.text }]}
-          placeholder="Confirm new password"
-          placeholderTextColor={colors.textMuted}
-          value={confirm}
-          onChangeText={setConfirm}
-          secureTextEntry
-          autoCapitalize="none"
-          editable={!loading}
-        />
-        <TouchableOpacity style={[styles.button, { backgroundColor: colors.primary }]} onPress={handleSubmit} disabled={loading}>
-          {loading ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.buttonText}>Update password</Text>}
-        </TouchableOpacity>
+        {sent ? (
+          <>
+            <Text style={[styles.successTitle, { color: colors.text }]}>Check your email</Text>
+            <Text style={[styles.successBody, { color: colors.textMuted }]}>
+              We sent a password reset link to {email}. Open the link to set your new password.
+            </Text>
+            <TouchableOpacity style={[styles.button, { backgroundColor: colors.primary }]} onPress={() => router.back()} disabled={loading}>
+              {loading ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.buttonText}>Back to settings</Text>}
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <Text style={[styles.hint, { color: colors.textMuted }]}>
+              For security, we'll send a reset link to your email. You'll set your new password from that link.
+            </Text>
+            {error ? <Text style={[styles.errorText, { color: colors.destructive }]}>{error}</Text> : null}
+            <TouchableOpacity style={[styles.button, { backgroundColor: colors.primary }]} onPress={handleSendResetEmail} disabled={loading}>
+              {loading ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.buttonText}>Send reset email</Text>}
+            </TouchableOpacity>
+          </>
+        )}
       </ScrollView>
     </KeyboardAvoidingView>
   )
@@ -82,6 +96,7 @@ export default function ChangePasswordScreen () {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -93,8 +108,10 @@ const styles = StyleSheet.create({
   title: { flex: 1, fontSize: 20, fontWeight: '700', textAlign: 'center' },
   headerSpacer: { width: 32 },
   scroll: { paddingTop: 16, paddingHorizontal: 20, paddingBottom: 40 },
-  hint: { fontSize: 14, marginBottom: 16 },
-  input: { borderWidth: 1, borderRadius: 12, padding: 14, fontSize: 16, marginBottom: 12 },
+  hint: { fontSize: 14, marginBottom: 16, textAlign: 'center' },
+  errorText: { fontSize: 14, marginBottom: 12, textAlign: 'center' },
+  successTitle: { fontSize: 20, fontWeight: '700', marginBottom: 12, textAlign: 'center' },
+  successBody: { fontSize: 15, textAlign: 'center', lineHeight: 22, marginBottom: 24 },
   button: { borderRadius: 12, padding: 16, alignItems: 'center', marginTop: 8 },
   buttonText: { fontSize: 16, fontWeight: '600', color: '#ffffff' }
 })

@@ -1,11 +1,14 @@
 import { useRef } from 'react'
 import { View, Text, StyleSheet, Animated, PanResponder, Dimensions, Image } from 'react-native'
-import { X, Heart } from 'lucide-react-native'
+import { X, Heart, Star } from 'lucide-react-native'
 import type { ThemeColors } from '@/lib/theme-colors'
 import { LIGHT_COLORS } from '@/lib/theme-colors'
 
-const SCREEN_WIDTH = Dimensions.get('window').width
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window')
 const SWIPE_THRESHOLD = SCREEN_WIDTH * 0.25
+/** Strong upward swipe (dominant vertical) — optional meal-of-the-day action */
+const SWIPE_UP_THRESHOLD = 88
+const MEAL_OF_DAY_BLUE = '#2563eb'
 
 export type MealCardDisplay = {
   title: string
@@ -18,11 +21,13 @@ export type MealCardDisplay = {
 type SwipeCardProps = {
   cardDisplay: MealCardDisplay
   onSwipe: (direction: 'left' | 'right') => void
+  /** When set, a dominant upward swipe triggers this instead of left/right. */
+  onSwipeUp?: () => void
   isTop: boolean
   themeColors?: ThemeColors
 }
 
-export default function SwipeCard ({ cardDisplay, onSwipe, isTop, themeColors = LIGHT_COLORS }: SwipeCardProps) {
+export default function SwipeCard ({ cardDisplay, onSwipe, onSwipeUp, isTop, themeColors = LIGHT_COLORS }: SwipeCardProps) {
   const c = themeColors
   const position = useRef(new Animated.ValueXY()).current;
   const rotate = position.x.interpolate({
@@ -41,10 +46,19 @@ export default function SwipeCard ({ cardDisplay, onSwipe, isTop, themeColors = 
     inputRange: [-SWIPE_THRESHOLD, 0],
     outputRange: [1, 0],
     extrapolate: 'clamp',
-  });
+  })
+
+  const pickOpacity = position.y.interpolate({
+    inputRange: [-SWIPE_UP_THRESHOLD * 1.35, -SWIPE_UP_THRESHOLD * 0.35, 0],
+    outputRange: [1, 0.35, 0],
+    extrapolate: 'clamp'
+  })
 
   const isTopRef = useRef(isTop)
   isTopRef.current = isTop
+
+  const onSwipeUpRef = useRef(onSwipeUp)
+  onSwipeUpRef.current = onSwipeUp
 
   const panResponder = useRef(
     PanResponder.create({
@@ -53,6 +67,20 @@ export default function SwipeCard ({ cardDisplay, onSwipe, isTop, themeColors = 
         position.setValue({ x: gesture.dx, y: gesture.dy });
       },
       onPanResponderRelease: (_, gesture) => {
+        const up =
+          onSwipeUpRef.current != null &&
+          gesture.dy < -SWIPE_UP_THRESHOLD &&
+          Math.abs(gesture.dy) > Math.abs(gesture.dx)
+        if (up) {
+          Animated.timing(position, {
+            toValue: { x: 0, y: -SCREEN_HEIGHT * 1.2 },
+            duration: 250,
+            useNativeDriver: true,
+          }).start(() => {
+            onSwipeUpRef.current?.()
+          })
+          return
+        }
         if (gesture.dx > SWIPE_THRESHOLD) {
           forceSwipe('right');
         } else if (gesture.dx < -SWIPE_THRESHOLD) {
@@ -108,6 +136,15 @@ export default function SwipeCard ({ cardDisplay, onSwipe, isTop, themeColors = 
         <X size={32} color={c.destructive} />
         <Text style={[styles.nopeLabelText, { color: c.destructive }]}>NOPE</Text>
       </Animated.View>
+
+      {onSwipeUp != null && (
+        <Animated.View style={[styles.pickLabelOuter, { opacity: pickOpacity }]} pointerEvents="none">
+          <View style={[styles.pickLabel, { borderColor: MEAL_OF_DAY_BLUE }]}>
+            <Star size={32} color={MEAL_OF_DAY_BLUE} fill={MEAL_OF_DAY_BLUE} />
+            <Text style={[styles.pickLabelText, { color: MEAL_OF_DAY_BLUE }]}>TODAY</Text>
+          </View>
+        </Animated.View>
+      )}
 
       <View style={[styles.imageSection, { backgroundColor: c.secondaryBg }]}>
         {cardDisplay.imageUrl ? (
@@ -172,6 +209,28 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   nopeLabelText: { fontSize: 20, fontWeight: '700', marginTop: 4 },
+  pickLabelOuter: {
+    position: 'absolute',
+    top: 36,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    zIndex: 10
+  },
+  pickLabel: {
+    borderWidth: 4,
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    transform: [{ rotate: '0deg' }],
+    alignItems: 'center'
+  },
+  pickLabelText: {
+    fontSize: 18,
+    fontWeight: '700',
+    marginTop: 4,
+    letterSpacing: 0.5
+  },
   imageSection: {
     flex: 1,
     minHeight: 320,

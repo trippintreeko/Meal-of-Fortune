@@ -11,6 +11,7 @@
     "build:android": "eas build --platform android --profile production",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
+    "audit:recipe-instructions": "npx tsx scripts/audit-recipe-instructions.ts",
     "cleanup-orphan-auth": "node -r dotenv/config scripts/cleanup-orphan-auth-users.mjs",
     "deploy:delete-account": "supabase functions deploy delete-account --no-verify-jwt",
     "render-verification-email": "npx tsx scripts/render-verification-email.ts",
@@ -20,7 +21,11 @@
     "spoonacular-list-matches": "node -r dotenv/config scripts/spoonacular-list-matches.mjs",
     "spoonacular-sync-titles": "node -r dotenv/config scripts/spoonacular-sync-titles.mjs",
     "spoonacular-list-duplicates": "node -r dotenv/config scripts/spoonacular-list-duplicates.mjs",
-    "spoonacular-dedupe-and-backfill": "node -r dotenv/config scripts/spoonacular-dedupe-and-backfill.mjs"
+    "spoonacular-dedupe-and-backfill": "node -r dotenv/config scripts/spoonacular-dedupe-and-backfill.mjs",
+    "spoonacular-restore-meals": "node -r dotenv/config scripts/spoonacular-restore-recipes-for-meals.mjs",
+    "download-ingredient-assets": "node -r dotenv/config scripts/download-ingredient-assets.mjs",
+    "upload-ingredient-assets": "node -r dotenv/config scripts/upload-ingredient-assets.mjs",
+    "remove-spoonacular-recipes": "node -r dotenv/config scripts/remove-spoonacular-recipes.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.2",

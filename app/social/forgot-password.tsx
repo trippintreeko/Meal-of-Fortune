@@ -46,7 +46,12 @@ export default function ForgotPasswordScreen () {
     const webRedirect = (process.env.EXPO_PUBLIC_EMAIL_CONFIRM_REDIRECT_URL as string | undefined)?.trim() ||
       (process.env.EXPO_PUBLIC_PASSWORD_RESET_REDIRECT_URL as string | undefined)?.trim()
     const devRedirect = __DEV__ ? 'http://localhost:8081/social/auth-callback' : null
-    const redirectTo = webRedirect || devRedirect || Linking.createURL('social/auth-callback')
+    // Important: for native apps, the redirect page must preserve Supabase's access/refresh tokens.
+    // If a static website redirect is used, those tokens can get dropped, resulting in
+    // "Invalid or expired link" when we return to `social/auth-callback`.
+    // So on iOS/Android we always use the app deep link.
+    const appRedirect = devRedirect || Linking.createURL('social/auth-callback')
+    const redirectTo = Platform.OS === 'web' ? (webRedirect || appRedirect) : appRedirect
     const { error: e } = await supabase.auth.resetPasswordForEmail(trimmed, { redirectTo })
     setLoading(false)
     if (e) {

@@ -4,12 +4,14 @@ import { useCallback, useEffect, useState } from 'react'
 import { View, Text, TextInput, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useSocialAuth } from '@/hooks/useSocialAuth'
+import { useThemeColors } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
 import type { FriendWithDetails } from '@/types/social'
 import { validateAndSanitize, MAX_LENGTH } from '@/lib/sanitize-input'
 import { MultiSelectFriends } from '@/components/social/friends/MultiSelectFriends'
 
 export default function CreateGroupFromFriendsScreen () {
+  const colors = useThemeColors()
   const router = useRouter()
   const { isAuthenticated, loading: authLoading } = useSocialAuth()
   const [friends, setFriends] = useState<FriendWithDetails[]>([])
@@ -93,31 +95,46 @@ export default function CreateGroupFromFriendsScreen () {
   if (authLoading || !isAuthenticated) return null
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.hint}>Choose friends to add to a new meal group. They will be notified and added as members.</Text>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
+      <Text style={[styles.hint, { color: colors.textMuted }]}>
+        Choose friends to add to a new meal group. They will be notified and added as members.
+      </Text>
       <TextInput
-        style={styles.input}
+        style={[
+          styles.input,
+          {
+            backgroundColor: colors.inputBg,
+            borderColor: colors.inputBorder,
+            color: colors.text
+          }
+        ]}
         placeholder="Group name"
-        placeholderTextColor="#94a3b8"
+        placeholderTextColor={colors.placeholder}
         value={groupName}
         onChangeText={setGroupName}
       />
       {loading ? (
         <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#22c55e" />
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : (
         <MultiSelectFriends friends={friends} selectedIds={selectedIds} onToggle={toggle} />
       )}
       <TouchableOpacity
-        style={[styles.createBtn, (creating || selectedIds.size === 0) && styles.createBtnDisabled]}
+        style={[
+          styles.createBtn,
+          { backgroundColor: colors.primary },
+          (creating || selectedIds.size === 0) && styles.createBtnDisabled
+        ]}
         onPress={create}
         disabled={creating || selectedIds.size === 0}
       >
         {creating ? (
-          <ActivityIndicator size="small" color="#fff" />
+          <ActivityIndicator size="small" color={colors.primaryText} />
         ) : (
-          <Text style={styles.createBtnText}>Create group ({selectedIds.size} selected)</Text>
+          <Text style={[styles.createBtnText, { color: colors.primaryText }]}>
+            Create group ({selectedIds.size} selected)
+          </Text>
         )}
       </TouchableOpacity>
     </View>
@@ -125,13 +142,11 @@ export default function CreateGroupFromFriendsScreen () {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f8fafc' },
+  container: { flex: 1 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  hint: { fontSize: 14, color: '#64748b', paddingHorizontal: 20, paddingVertical: 8 },
+  hint: { fontSize: 14, paddingHorizontal: 20, paddingVertical: 8 },
   input: {
-    backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#e2e8f0',
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
@@ -141,11 +156,10 @@ const styles = StyleSheet.create({
   createBtn: {
     marginHorizontal: 20,
     marginVertical: 16,
-    backgroundColor: '#22c55e',
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center'
   },
   createBtnDisabled: { opacity: 0.6 },
-  createBtnText: { color: '#fff', fontWeight: '600', fontSize: 16 }
+  createBtnText: { fontWeight: '600', fontSize: 16 }
 })

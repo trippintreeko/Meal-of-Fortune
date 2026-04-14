@@ -1,7 +1,31 @@
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { create } from 'zustand'
 import type { MealType, RoundResult } from '@/types/game-session'
 import { ROUND_INDEX_TO_PURPOSE } from '@/types/game-session'
 import { pickRandomGameIds, GAMES_PER_SESSION } from '@/lib/game-registry'
+import { useFoodPreferencesStore } from '@/store/food-preferences-store'
+
+/** Persisted when the last minigame adds uncollected IDs to "don't want today" so we can undo after crash. */
+export const GAME_ADDED_NOT_TODAY_STORAGE_KEY = '@meal_of_fortune_game_added_not_today_ids'
+
+async function persistGameAddedNotTodayIds (ids: string[]): Promise<void> {
+  if (ids.length === 0) {
+    await AsyncStorage.removeItem(GAME_ADDED_NOT_TODAY_STORAGE_KEY)
+    return
+  }
+  await AsyncStorage.setItem(GAME_ADDED_NOT_TODAY_STORAGE_KEY, JSON.stringify(ids))
+}
+
+async function readPersistedGameAddedNotTodayIds (): Promise<string[]> {
+  try {
+    const raw = await AsyncStorage.getItem(GAME_ADDED_NOT_TODAY_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as unknown
+    return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : []
+  } catch {
+    return []
+  }
+}
 
 type NavParams = {
   base: string
@@ -26,7 +50,7 @@ type GameSessionState = {
   startSession: (mealType: MealType) => void
   setFeeling: (feeling: string | null) => void
   setRoundResult: (roundIndex: number, result: RoundResult) => void
-  setGameAddedNotTodayIds: (ids: string[]) => void
+  setGameAddedNotTodayIds: (ids: string[]) => Promise<void>
   getResultsForNavigation: () => NavParams | null
   reset: () => void
 }
@@ -41,6 +65,7 @@ export const useGameSessionStore = create<GameSessionState>((set, get) => ({
   gameAddedNotTodayIds: [],
 
   startSession (mealType: MealType) {
+    void persistGameAddedNotTodayIds([])
     const gameIds = pickRandomGameIds(TOTAL_ROUNDS)
     set({
       mealType,
@@ -62,8 +87,9 @@ export const useGameSessionStore = create<GameSessionState>((set, get) => ({
     set({ roundResults: next })
   },
 
-  setGameAddedNotTodayIds (ids: string[]) {
+  async setGameAddedNotTodayIds (ids: string[]) {
     set({ gameAddedNotTodayIds: ids })
+    await persistGameAddedNotTodayIds(ids)
   },
 
   getResultsForNavigation () {
@@ -112,8 +138,31 @@ export const useGameSessionStore = create<GameSessionState>((set, get) => ({
   },
 
   reset () {
+    void persistGameAddedNotTodayIds([])
     set({ mealType: null, feeling: null, gameIds: [], roundResults: [null, null], gameAddedNotTodayIds: [] })
   }
 }))
+
+/**
+ * Remove IDs that this game run added to "don't want today" (uncollected ingredients).
+ * Call when leaving rounds/results (crash, back, or navigation). Safe to call repeatedly.
+ * Loads preferences if needed so cleanup works on cold start after a crash.
+ */
+export async function clearGameAddedNotTodayFromPreferences (): Promise<void> {
+  const prefs = useFoodPreferencesStore.getState()
+  if (!prefs.hydrated) await prefs.load()
+
+  let added = useGameSessionStore.getState().gameAddedNotTodayIds
+  if (added.length === 0) {
+    added = await readPersistedGameAddedNotTodayIds()
+  }
+  if (added.length === 0) return
+
+  const removeSet = new Set(added)
+  const current = useFoodPreferencesStore.getState().notTodayIds
+  const next = current.filter((id) => !removeSet.has(id))
+  await useFoodPreferencesStore.getState().setNotToday(next)
+  await useGameSessionStore.getState().setGameAddedNotTodayIds([])
+}
 
 export { ROUND_INDEX_TO_PURPOSE, TOTAL_ROUNDS }

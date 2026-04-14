@@ -6,6 +6,8 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import { useThemeColors, useTheme } from '@/hooks/useTheme'
 import { useFrameworkReady } from '@/hooks/useFrameworkReady'
 import AuthRedirect from '@/components/AuthRedirect'
+import GameNotTodayRouteCleanup from '@/components/GameNotTodayRouteCleanup'
+import SeedDontWantTodayFromProfile from '@/components/SeedDontWantTodayFromProfile'
 import { ThemeProvider } from '@/contexts/ThemeContext'
 
 // Reduce console/UI spam when device cannot reach Supabase (e.g. wrong URL or no network)
@@ -18,6 +20,8 @@ function RootStack () {
   const statusBarStyle = resolvedTheme === 'dark' ? 'light' : 'dark'
   return (
     <View style={{ flex: 1, paddingTop: insets.top, backgroundColor: colors.background }}>
+      <GameNotTodayRouteCleanup />
+      <SeedDontWantTodayFromProfile />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="privacy" />

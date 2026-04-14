@@ -4,7 +4,6 @@ Recipe-related helpers live here (search URLs, Spoonacular matching, etc).
 
 Current helpers:
 - `getMealNearMeUrl(mealTitle?)`
-- `getRecipeSearchUrl(mealTitle)`
 
 ### Matching gallery meals to Spoonacular and saving ingredient images
 

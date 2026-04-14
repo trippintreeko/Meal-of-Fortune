@@ -4,14 +4,14 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  TextInput,
   ScrollView,
   Image,
-  ActivityIndicator
+  ActivityIndicator,
+  Alert
 } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { ChevronLeft, Clock, Users, FileText, StickyNote, ShoppingCart } from 'lucide-react-native'
-import AsyncStorage from '@react-native-async-storage/async-storage'
+import { ChevronLeft, Clock, Users, ShoppingCart } from 'lucide-react-native'
+// Recipe notes tab (restore later): add TextInput to react-native import; FileText + StickyNote from lucide; AsyncStorage
 import { useThemeColors } from '@/hooks/useTheme'
 import { supabase } from '@/lib/supabase'
 import { instructionsToSteps } from '@/lib/recipes/instructions'
@@ -20,8 +20,9 @@ import {
   getBestIngredientImageUrlForViewing
 } from '@/lib/spoonacular-images'
 import { MealImageFullscreenViewer } from '@/components/MealImageFullscreenViewer'
+import { useCalendarStore } from '@/store/calendar-store'
 
-const RECIPE_NOTES_KEY_PREFIX = 'recipe_notes_'
+// const RECIPE_NOTES_KEY_PREFIX = 'recipe_notes_'
 
 type GalleryMealRow = {
   id: string
@@ -57,6 +58,7 @@ function formatIngredient (ing: RecipeIngredientRow): string {
 export default function RecipeScreen () {
   const router = useRouter()
   const colors = useThemeColors()
+  const savedMeals = useCalendarStore(s => s.savedMeals)
   const params = useLocalSearchParams<{ id?: string; grocery?: string; savedMealId?: string }>()
   const id = (params.id ?? '').trim()
   const savedMealId = (params.savedMealId ?? '').trim()
@@ -66,7 +68,7 @@ export default function RecipeScreen () {
     (Array.isArray(params.grocery) && params.grocery[0] === '1')
 
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<'recipe' | 'notes'>('recipe')
+  // const [activeTab, setActiveTab] = useState<'recipe' | 'notes'>('recipe')
   const [title, setTitle] = useState('Recipe')
   const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [servings, setServings] = useState<number | null>(null)
@@ -74,9 +76,9 @@ export default function RecipeScreen () {
   const [instructions, setInstructions] = useState<string | null>(null)
   const [ingredients, setIngredients] = useState<RecipeIngredientRow[]>([])
   const [ingredientImageMap, setIngredientImageMap] = useState<Map<number, string>>(new Map())
-  const [notes, setNotes] = useState('')
-  const [notesLoaded, setNotesLoaded] = useState(false)
-  const [savingNotes, setSavingNotes] = useState(false)
+  // const [notes, setNotes] = useState('')
+  // const [notesLoaded, setNotesLoaded] = useState(false)
+  // const [savingNotes, setSavingNotes] = useState(false)
   const [fullScreenImageUrl, setFullScreenImageUrl] = useState<string | null>(null)
   const scrollRef = useRef<ScrollView>(null)
   const ingredientsY = useRef(0)
@@ -95,27 +97,27 @@ export default function RecipeScreen () {
 
   const steps = instructions ? instructionsToSteps(instructions) : []
 
-  const loadNotes = useCallback(async () => {
-    if (!id) return
-    try {
-      const raw = await AsyncStorage.getItem(RECIPE_NOTES_KEY_PREFIX + id)
-      setNotes(raw ?? '')
-    } catch {
-      setNotes('')
-    } finally {
-      setNotesLoaded(true)
-    }
-  }, [id])
+  // const loadNotes = useCallback(async () => {
+  //   if (!id) return
+  //   try {
+  //     const raw = await AsyncStorage.getItem(RECIPE_NOTES_KEY_PREFIX + id)
+  //     setNotes(raw ?? '')
+  //   } catch {
+  //     setNotes('')
+  //   } finally {
+  //     setNotesLoaded(true)
+  //   }
+  // }, [id])
 
-  const saveNotes = useCallback(async () => {
-    if (!id) return
-    setSavingNotes(true)
-    try {
-      await AsyncStorage.setItem(RECIPE_NOTES_KEY_PREFIX + id, notes)
-    } finally {
-      setSavingNotes(false)
-    }
-  }, [id, notes])
+  // const saveNotes = useCallback(async () => {
+  //   if (!id) return
+  //   setSavingNotes(true)
+  //   try {
+  //     await AsyncStorage.setItem(RECIPE_NOTES_KEY_PREFIX + id, notes)
+  //   } finally {
+  //     setSavingNotes(false)
+  //   }
+  // }, [id, notes])
 
   useEffect(() => {
     let cancelled = false
@@ -192,12 +194,12 @@ export default function RecipeScreen () {
     return () => { cancelled = true }
   }, [id])
 
-  useEffect(() => {
-    if (activeTab === 'notes' && id) void loadNotes()
-  }, [activeTab, id, loadNotes])
+  // useEffect(() => {
+  //   if (activeTab === 'notes' && id) void loadNotes()
+  // }, [activeTab, id, loadNotes])
 
   useEffect(() => {
-    if (!openGrocery || loading || activeTab !== 'recipe') return
+    if (!openGrocery || loading) return
     if (ingredients.length === 0) return
     const t = setTimeout(() => {
       scrollRef.current?.scrollTo({
@@ -206,11 +208,11 @@ export default function RecipeScreen () {
       })
     }, 400)
     return () => clearTimeout(t)
-  }, [openGrocery, loading, ingredients.length, activeTab])
+  }, [openGrocery, loading, ingredients.length])
 
-  const handleBlurNotes = () => {
-    if (id && notesLoaded) void saveNotes()
-  }
+  // const handleBlurNotes = () => {
+  //   if (id && notesLoaded) void saveNotes()
+  // }
 
   const hasRecipe =
     !!imageUrl ||
@@ -232,20 +234,30 @@ export default function RecipeScreen () {
           style={styles.headerIconBtn}
           activeOpacity={0.85}
           onPress={() => {
-            if (savedMealId) {
-              router.push({ pathname: '/grocery-list', params: { mealId: savedMealId } })
+            const explicitSaved = (savedMealId ?? '').trim()
+            if (explicitSaved) {
+              router.push({ pathname: '/grocery-list', params: { mealId: explicitSaved } })
               return
             }
-            scrollRef.current?.scrollTo({
-              y: Math.max(0, ingredientsY.current - 16),
-              animated: true
-            })
+            const galleryKey = (id ?? '').trim()
+            const linked = galleryKey
+              ? savedMeals.find((m) => (m.galleryMealId ?? '').trim() === galleryKey)
+              : undefined
+            if (linked) {
+              router.push({ pathname: '/grocery-list', params: { mealId: linked.id } })
+              return
+            }
+            Alert.alert(
+              'Grocery list',
+              'Add this meal to “Meals I want” first (heart it on the food gallery). Then tap the cart again to open a grocery list with its ingredients.'
+            )
           }}
         >
           <ShoppingCart size={22} color={colors.text} />
         </TouchableOpacity>
       </View>
 
+      {/*
       <View style={[styles.tabs, { borderBottomColor: colors.border }]}>
         <TouchableOpacity
           style={[
@@ -272,9 +284,9 @@ export default function RecipeScreen () {
           </Text>
         </TouchableOpacity>
       </View>
+      */}
 
-      {activeTab === 'recipe' && (
-        <ScrollView
+      <ScrollView
           ref={scrollRef}
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
@@ -364,8 +376,8 @@ export default function RecipeScreen () {
             </>
           )}
         </ScrollView>
-      )}
 
+      {/*
       {activeTab === 'notes' && (
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           {!notesLoaded ? (
@@ -395,6 +407,7 @@ export default function RecipeScreen () {
           )}
         </ScrollView>
       )}
+      */}
 
       <MealImageFullscreenViewer
         visible={fullScreenImageUrl != null}
@@ -418,19 +431,19 @@ const styles = StyleSheet.create({
   backButton: { marginRight: 12 },
   headerTitle: { flex: 1, fontSize: 18, fontWeight: '700', textAlign: 'center' },
   headerIconBtn: { width: 36, alignItems: 'flex-end' },
-  tabs: {
-    flexDirection: 'row',
-    borderBottomWidth: 1
-  },
-  tab: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    paddingVertical: 12
-  },
-  tabText: { fontSize: 15, fontWeight: '600' },
+  // tabs: {
+  //   flexDirection: 'row',
+  //   borderBottomWidth: 1
+  // },
+  // tab: {
+  //   flex: 1,
+  //   flexDirection: 'row',
+  //   alignItems: 'center',
+  //   justifyContent: 'center',
+  //   gap: 8,
+  //   paddingVertical: 12
+  // },
+  // tabText: { fontSize: 15, fontWeight: '600' },
   content: { padding: 20, paddingBottom: 40 },
   loader: { marginVertical: 24, alignSelf: 'center' },
   empty: { fontSize: 15, textAlign: 'center', marginTop: 16 },
@@ -455,14 +468,14 @@ const styles = StyleSheet.create({
   ingredientLine: { fontSize: 15, flex: 1 },
   stepRow: { flexDirection: 'row', marginBottom: 12, gap: 8 },
   stepNum: { fontSize: 15, fontWeight: '700', minWidth: 24 },
-  stepText: { fontSize: 15, flex: 1 },
-  notesHint: { fontSize: 13, marginBottom: 10 },
-  notesInput: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 14,
-    minHeight: 160,
-    fontSize: 15
-  },
-  savingHint: { fontSize: 12, marginTop: 8 }
+  stepText: { fontSize: 15, flex: 1 }
+  // notesHint: { fontSize: 13, marginBottom: 10 },
+  // notesInput: {
+  //   borderWidth: 1,
+  //   borderRadius: 12,
+  //   padding: 14,
+  //   minHeight: 160,
+  //   fontSize: 15
+  // },
+  // savingHint: { fontSize: 12, marginTop: 8 }
 })

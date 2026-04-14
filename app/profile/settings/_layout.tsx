@@ -7,7 +7,9 @@ export default function SettingsLayout () {
       <Stack.Screen name="notifications" />
       <Stack.Screen name="clock-format" />
       <Stack.Screen name="privacy" />
+      <Stack.Screen name="helpful-hints" />
       <Stack.Screen name="dont-want-today" />
+      <Stack.Screen name="preference-ingredient-list" />
       <Stack.Screen name="edit-profile" />
       <Stack.Screen name="account" />
       <Stack.Screen name="change-email" />

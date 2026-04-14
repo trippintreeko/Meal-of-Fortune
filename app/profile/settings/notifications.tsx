@@ -8,6 +8,7 @@ import { ChevronLeft, Bell } from 'lucide-react-native'
 import { useThemeColors } from '@/hooks/useTheme'
 import { useSocialAuth } from '@/hooks/useSocialAuth'
 import { useProfileSettings } from '@/hooks/useProfileSettings'
+import { useClockFormat } from '@/hooks/useClockFormat'
 import SettingsList from '@/components/profile/SettingsList'
 import type { SettingsItem } from '@/components/profile/SettingsItem'
 import type { NotificationSettings } from '@/types/profile-settings'
@@ -25,9 +26,20 @@ function dateToTimeString (d: Date): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
 }
 
+function formatTimeForDisplay (time: string, is24Hour: boolean): string {
+  if (is24Hour) return time
+  const [hRaw, mRaw] = time.split(':').map(Number)
+  const h = Number.isFinite(hRaw) ? hRaw : 0
+  const m = Number.isFinite(mRaw) ? mRaw : 0
+  const suffix = h >= 12 ? 'PM' : 'AM'
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  return `${h12}:${String(m).padStart(2, '0')} ${suffix}`
+}
+
 export default function NotificationSettingsScreen () {
   const router = useRouter()
   const colors = useThemeColors()
+  const { is24Hour } = useClockFormat()
   const { profile, refreshProfile } = useSocialAuth()
   const { updateProfile, getNotificationSettings } = useProfileSettings(profile?.auth_id ?? undefined, profile, refreshProfile)
   const settings = getNotificationSettings()
@@ -61,8 +73,11 @@ export default function NotificationSettingsScreen () {
   }
 
   const BellIcon = Bell
+  const defaultReminderDisplay = formatTimeForDisplay(settings.meal_reminders.default_time, is24Hour)
+  const quietStartDisplay = formatTimeForDisplay(settings.quiet_hours.start, is24Hour)
+  const quietEndDisplay = formatTimeForDisplay(settings.quiet_hours.end, is24Hour)
   const items: SettingsItem[] = [
-    { id: 'meal-reminders', icon: BellIcon, title: 'Meal reminders', description: `Default ${settings.meal_reminders.default_time}`, type: 'toggle', value: settings.meal_reminders.enabled, onValueChange: (v) => updateNotifications({ meal_reminders: { ...settings.meal_reminders, enabled: v } }) },
+    { id: 'meal-reminders', icon: BellIcon, title: 'Meal reminders', description: `Default ${defaultReminderDisplay}`, type: 'toggle', value: settings.meal_reminders.enabled, onValueChange: (v) => updateNotifications({ meal_reminders: { ...settings.meal_reminders, enabled: v } }) },
     { id: 'friend-requests', icon: BellIcon, title: 'Friend requests', type: 'toggle', value: settings.friend_requests.push, onValueChange: (v) => updateNotifications({ friend_requests: { ...settings.friend_requests, push: v } }) },
     { id: 'group-invites', icon: BellIcon, title: 'Group invites', type: 'toggle', value: settings.group_invites.push, onValueChange: (v) => updateNotifications({ group_invites: { ...settings.group_invites, push: v } }) },
     { id: 'voting-started', icon: BellIcon, title: 'Voting session started', type: 'toggle', value: settings.voting_started.push, onValueChange: (v) => updateNotifications({ voting_started: { ...settings.voting_started, push: v } }) },
@@ -72,7 +87,7 @@ export default function NotificationSettingsScreen () {
     { id: 'deadline-reminders', icon: BellIcon, title: 'Deadline reminders (30min, 1hr, 2hr)', type: 'toggle', value: settings.deadline_reminders.enabled, onValueChange: (v) => updateNotifications({ deadline_reminders: { ...settings.deadline_reminders, enabled: v } }) },
     { id: 'weekly-summary', icon: BellIcon, title: 'Weekly summary', type: 'toggle', value: settings.weekly_summary, onValueChange: (v) => updateNotifications({ weekly_summary: v }) },
     { id: 'marketing', icon: BellIcon, title: 'Marketing / promotional emails', type: 'toggle', value: settings.marketing_emails, onValueChange: (v) => updateNotifications({ marketing_emails: v }) },
-    { id: 'quiet-hours', icon: BellIcon, title: 'Quiet hours', description: `${settings.quiet_hours.start} – ${settings.quiet_hours.end}`, type: 'toggle', value: settings.quiet_hours.enabled, onValueChange: (v) => updateNotifications({ quiet_hours: { ...settings.quiet_hours, enabled: v } }) }
+    { id: 'quiet-hours', icon: BellIcon, title: 'Quiet hours', description: `${quietStartDisplay} – ${quietEndDisplay}`, type: 'toggle', value: settings.quiet_hours.enabled, onValueChange: (v) => updateNotifications({ quiet_hours: { ...settings.quiet_hours, enabled: v } }) }
   ]
 
   return (
@@ -85,12 +100,12 @@ export default function NotificationSettingsScreen () {
         <View style={styles.headerSpacer} />
       </View>
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
-        <Text style={[styles.subtitle, { color: colors.textMuted }]}>Saved to your profile. Push delivery depends on device permissions.</Text>
+        <Text style={[styles.subtitle, { color: colors.textMuted }]}>Saved to your profile. Social and vote alerts appear in Social → Notifications. Meal reminders also use the device when allowed. Quiet hours use UTC until per-device timezone is added.</Text>
         <SettingsList items={items} themeColors={colors} />
         <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>Times</Text>
         <TouchableOpacity style={[styles.timeRow, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => openTimePicker('default_time')} activeOpacity={0.7}>
           <Text style={[styles.timeRowLabel, { color: colors.text }]}>Default reminder time</Text>
-          <Text style={[styles.timeRowValue, { color: colors.primary }]}>{settings.meal_reminders.default_time}</Text>
+          <Text style={[styles.timeRowValue, { color: colors.primary }]}>{defaultReminderDisplay}</Text>
         </TouchableOpacity>
         <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>Quiet hours</Text>
         <View style={styles.quietRow}>
@@ -98,11 +113,11 @@ export default function NotificationSettingsScreen () {
           <View style={styles.quietSwatch}>
             <TouchableOpacity style={[styles.timeRow, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => openTimePicker('quiet_start')} activeOpacity={0.7}>
               <Text style={[styles.timeRowLabel, { color: colors.text }]}>Start</Text>
-              <Text style={[styles.timeRowValue, { color: colors.primary }]}>{settings.quiet_hours.start}</Text>
+              <Text style={[styles.timeRowValue, { color: colors.primary }]}>{quietStartDisplay}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[styles.timeRow, { backgroundColor: colors.card, borderColor: colors.cardBorder }]} onPress={() => openTimePicker('quiet_end')} activeOpacity={0.7}>
               <Text style={[styles.timeRowLabel, { color: colors.text }]}>End</Text>
-              <Text style={[styles.timeRowValue, { color: colors.primary }]}>{settings.quiet_hours.end}</Text>
+              <Text style={[styles.timeRowValue, { color: colors.primary }]}>{quietEndDisplay}</Text>
             </TouchableOpacity>
           </View>
         </View>

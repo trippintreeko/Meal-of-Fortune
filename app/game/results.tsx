@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native'
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Image } from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { supabase } from '@/lib/supabase'
 import { useThemeColors } from '@/hooks/useTheme'
@@ -13,8 +13,12 @@ import {
   mealViolatesDislikesOnly,
   mergeFavoriteAppliedAllergyExcludedNames
 } from '@/lib/meal-avoid-lists'
-import { useGameSessionStore } from '@/store/game-session'
+import { clearGameAddedNotTodayFromPreferences } from '@/store/game-session'
+import { buildIngredientGroupIndex, expandIdsByIngredientGroups } from '@/lib/ingredient-grouping'
+import { getBestRecipeImageUrlForViewing, mergeRecipeAndStoredImageUrls } from '@/lib/spoonacular-images'
 import { Trophy } from 'lucide-react-native'
+
+const MEAL_OF_FORTUNE_LOGO = require('../../assets/images/icon.png')
 
 /** One gallery meal as a swipe card: display fields + ids for saving */
 type GalleryMealCard = {
@@ -45,6 +49,7 @@ type GalleryRow = {
   vegetable_id: string | null
   cooking_method: string | null
   spoonacular_recipe_id: number | null
+  image_urls: string[] | null
 }
 
 async function fetchRecipeIngredientIdsMap (recipeIds: number[]): Promise<Map<number, string[]>> {
@@ -187,7 +192,7 @@ export default function ResultsScreen () {
           setLoading(false)
           return
         }
-        const collected = [...baseIds, ...proteinIds, ...vegetableIds]
+        let collected = [...baseIds, ...proteinIds, ...vegetableIds]
         const rawMethod = (params.method ?? '').trim()
         const methods = rawMethod
           ? [...new Set(rawMethod.split(',').map(m => normalizeCookingMethodFromDb(m.trim())).filter(Boolean))]
@@ -195,9 +200,21 @@ export default function ResultsScreen () {
         const dislikeOnly = [...dislikeIds]
         const notTodayOnly = [...notTodayIds]
 
+        // Expand "collected" by ingredient grouping, so collecting (e.g.) "almonds"
+        // counts all ingredient_id variants that belong to the same group.
+        const { data: ingredientRows, error: ingredientError } = await supabase
+          .from('ingredient_assets')
+          .select('spoonacular_ingredient_id, name')
+        if (!cancelled && !ingredientError && ingredientRows?.length) {
+          const index = buildIngredientGroupIndex(
+            ingredientRows as Array<{ spoonacular_ingredient_id: number; name: string | null }>
+          )
+          collected = expandIdsByIngredientGroups(collected, index)
+        }
+
         const { data: galleryData, error: galleryError } = await supabase
           .from('gallery_meals')
-          .select('id, title, description, base_id, protein_id, vegetable_id, cooking_method, spoonacular_recipe_id')
+          .select('id, title, description, base_id, protein_id, vegetable_id, cooking_method, spoonacular_recipe_id, image_urls')
           .order('sort_order')
 
         if (cancelled) return
@@ -242,7 +259,8 @@ export default function ResultsScreen () {
             .in('spoonacular_recipe_id', recipeIds)
           if (!cancelled && recipeData?.length) {
             for (const r of recipeData as Array<{ spoonacular_recipe_id: number; image_url: string | null }>) {
-              if (r.image_url) recipeImageMap.set(r.spoonacular_recipe_id, r.image_url)
+              const best = getBestRecipeImageUrlForViewing(r.image_url)
+              if (best) recipeImageMap.set(r.spoonacular_recipe_id, best)
             }
           }
         }
@@ -272,7 +290,10 @@ export default function ResultsScreen () {
           const vegetableDisplay = nameMap[row.vegetable_id ?? ''] ?? ''
           const fallbackDescription = [baseDisplay, proteinDisplay, vegetableDisplay].filter(Boolean).join(', ')
           const description = (row.description && row.description.trim()) ? row.description.trim() : fallbackDescription
-          const imageUrl = row.spoonacular_recipe_id != null ? recipeImageMap.get(row.spoonacular_recipe_id) ?? null : null
+          const recipeImageUrl = row.spoonacular_recipe_id != null ? recipeImageMap.get(row.spoonacular_recipe_id) ?? null : null
+          const storedUrls = Array.isArray(row.image_urls) ? row.image_urls : []
+          const mergedUrls = mergeRecipeAndStoredImageUrls(recipeImageUrl, storedUrls, row.spoonacular_recipe_id)
+          const imageUrl = mergedUrls.length > 0 ? mergedUrls[0] : null
           return {
             id: row.id,
             title: row.title,
@@ -330,12 +351,7 @@ export default function ResultsScreen () {
   // When leaving results (unmount), remove game-added "don't want today" IDs so the list resets for the next play.
   useEffect(() => {
     return () => {
-      const added = useGameSessionStore.getState().gameAddedNotTodayIds
-      if (added.length === 0) return
-      const current = useFoodPreferencesStore.getState().notTodayIds
-      const next = current.filter((id) => !added.includes(id))
-      void useFoodPreferencesStore.getState().setNotToday(next)
-      useGameSessionStore.getState().setGameAddedNotTodayIds([])
+      void clearGameAddedNotTodayFromPreferences()
     }
   }, [])
 
@@ -496,11 +512,18 @@ export default function ResultsScreen () {
 
         {completedCount > 0 && (
           <TouchableOpacity
-            style={[styles.spinLink, { backgroundColor: colors.secondaryBg }]}
+            style={[
+              styles.spinLink,
+              styles.feelingLuckyBtn,
+              { backgroundColor: colors.secondaryBg, borderColor: colors.cardBorder }
+            ]}
             onPress={() => router.replace('/game/spin')}
             activeOpacity={0.7}
+            accessibilityRole="button"
+            accessibilityLabel="Feeling lucky, open spin to pick a meal"
           >
-            <Text style={[styles.spinLinkText, { color: colors.secondary }]}>Still can't decide? Spin to pick one</Text>
+            <Image source={MEAL_OF_FORTUNE_LOGO} style={styles.feelingLuckyLogo} resizeMode="contain" />
+            <Text style={[styles.feelingLuckyText, { color: colors.text }]}>Feeling lucky</Text>
           </TouchableOpacity>
         )}
 
@@ -545,7 +568,22 @@ const styles = StyleSheet.create({
   savedMealDetails: { fontSize: 14, marginTop: 4 },
   savedMealMethod: { fontSize: 13, marginTop: 4, fontStyle: 'italic' },
   spinLink: { marginBottom: 12, paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10, alignItems: 'center' },
-  spinLinkText: { fontSize: 14, fontWeight: '600' },
+  feelingLuckyBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 10,
+    borderWidth: 1
+  },
+  feelingLuckyLogo: {
+    width: 36,
+    height: 36,
+    borderRadius: 9
+  },
+  feelingLuckyText: {
+    fontSize: 16,
+    fontWeight: '700'
+  },
   homeButton: { borderRadius: 12, padding: 16, alignItems: 'center' },
   homeButtonText: { fontSize: 18, fontWeight: '700', color: '#ffffff' }
 })

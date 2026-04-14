@@ -1,6 +1,6 @@
-# Meal Vote (Social Voting)
+# Meal of Fortune (Social Voting)
 
-Meal Vote lets friends and family vote on what to eat. It uses Supabase for auth, database, and real-time updates.
+Meal of Fortune lets friends and family vote on what to eat. It uses Supabase for auth, database, and real-time updates.
 
 **Enhanced voting flow (admin start, extend/cancel, schedule meal, calendar):** see [VOTING-SESSION-ENHANCEMENT.md](./VOTING-SESSION-ENHANCEMENT.md) for requirements, architecture, and implementation phases.
 

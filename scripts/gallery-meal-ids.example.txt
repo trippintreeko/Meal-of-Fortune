@@ -1,0 +1,14 @@
+# One gallery_meals.id (UUID) per line. Lines starting with # are ignored.
+# Export every id with:
+#   npm run spoonacular-restore-meals -- --print-ids
+# Then copy the rows you need into a new file and run:
+#   npm run spoonacular-restore-meals -- --file=scripts/my-restore-list.txt
+#
+# Refetch details for those rows (keeps current spoonacular_recipe_id):
+#   npm run spoonacular-restore-meals -- --file=scripts/my-restore-list.txt
+#
+# Re-assign recipe from title search, then fetch (use --rematch-index=1 for 2nd hit):
+#   npm run spoonacular-restore-meals -- --file=scripts/my-restore-list.txt --rematch-title
+#
+# Windows PowerShell (ids without a file):
+#   $env:GALLERY_MEAL_IDS='uuid1,uuid2'; npm run spoonacular-restore-meals

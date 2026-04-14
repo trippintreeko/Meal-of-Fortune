@@ -27,6 +27,10 @@ export type NotificationType =
   | 'result_ready'
   | 'group_invite'
   | 'group_join_request'
+  | 'meal_reminder'
+  | 'voting_session_started'
+  | 'weekly_summary'
+  | 'marketing_email'
 
 export type UserProfile = {
   id: string

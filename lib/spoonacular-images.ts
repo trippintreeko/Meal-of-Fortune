@@ -19,13 +19,48 @@ export function getBestRecipeImageUrlForViewing (url: string | null | undefined)
 }
 
 /**
+ * When parseable, returns Spoonacular recipe id embedded in CDN or Supabase recipe-images path.
+ */
+export function extractSpoonacularRecipeIdFromImageUrl (url: string | null | undefined): number | null {
+  if (url == null || typeof url !== 'string') return null
+  const t = url.trim()
+  if (!t) return null
+  try {
+    const u = new URL(t)
+    const path = u.pathname
+    const storage = path.match(/\/recipe-images\/(\d+)\.(?:jpg|jpeg|png|webp)$/i)
+    if (storage) return parseInt(storage[1], 10)
+    const cdn = path.match(/\/recipes\/(\d+)(?:-\d+x\d+)?\.(?:jpg|jpeg|png|webp)$/i)
+    if (cdn) return parseInt(cdn[1], 10)
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+/** Same physical image as different URL strings (CDN size vs Supabase upload, etc.). */
+export function canonicalRecipeImageIdentityKey (url: string): string {
+  const rid = extractSpoonacularRecipeIdFromImageUrl(url)
+  if (rid != null) return `spRecipeImg:${rid}`
+  try {
+    const u = new URL(url.trim())
+    const path = u.pathname.replace(/-\d+x\d+(\.(?:jpg|jpeg|png|webp))$/i, '$1')
+    return `path:${u.hostname.toLowerCase()}${path}`
+  } catch {
+    return `raw:${url.trim().toLowerCase()}`
+  }
+}
+
+/**
  * Spoonacular recipe `image_url` is often already copied into `gallery_meals.image_urls`
  * by import scripts. Prepend recipe URL + concat gallery would duplicate the same link.
- * Merge with order: recipe first (when present), then stored URLs; drop exact duplicates.
+ * Merge: recipe first, then stored URLs that still belong to this Spoonacular recipe (when id known),
+ * then dedupe by canonical identity (CDN size variants, Supabase vs CDN same id).
  */
 export function mergeRecipeAndStoredImageUrls (
   recipeImageUrl: string | null | undefined,
-  storedUrls: string[]
+  storedUrls: string[],
+  spoonacularRecipeId?: number | null
 ): string[] {
   const ordered: string[] = []
   const push = (u: string | null | undefined) => {
@@ -33,12 +68,23 @@ export function mergeRecipeAndStoredImageUrls (
     if (s) ordered.push(s)
   }
   push(recipeImageUrl)
-  for (const u of storedUrls) push(u)
+  const rid =
+    spoonacularRecipeId != null && Number.isFinite(Number(spoonacularRecipeId))
+      ? Number(spoonacularRecipeId)
+      : null
+  for (const u of storedUrls) {
+    if (rid != null) {
+      const fromUrl = extractSpoonacularRecipeIdFromImageUrl(u)
+      if (fromUrl != null && fromUrl !== rid) continue
+    }
+    push(u)
+  }
   const seen = new Set<string>()
   const out: string[] = []
   for (const s of ordered) {
-    if (seen.has(s)) continue
-    seen.add(s)
+    const key = canonicalRecipeImageIdentityKey(s)
+    if (seen.has(key)) continue
+    seen.add(key)
     out.push(s)
   }
   return out

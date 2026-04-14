@@ -5,6 +5,20 @@ export type PreferenceKind = 'favorite' | 'dislike' | 'never_today'
 
 const PREFERENCES_KEY = '@meal_food_preferences'
 
+/** Not Today uses Spoonacular ingredient ids (numeric strings from ingredient_assets). Drop legacy UUIDs / junk. */
+export function sanitizeNotTodayIds (ids: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const id of ids) {
+    const t = (id ?? '').trim()
+    if (!t || !/^\d+$/.test(t)) continue
+    if (seen.has(t)) continue
+    seen.add(t)
+    out.push(t)
+  }
+  return out
+}
+
 type PersistedPreferences = {
   favoriteIds: string[]
   dislikeIds: string[]
@@ -42,10 +56,12 @@ async function loadStored (): Promise<PersistedPreferences> {
     const raw = await AsyncStorage.getItem(PREFERENCES_KEY)
     if (!raw) return defaultPersisted
     const parsed = JSON.parse(raw) as Partial<PersistedPreferences>
-    return {
+    const rawNotToday = Array.isArray(parsed.notTodayIds) ? parsed.notTodayIds : defaultPersisted.notTodayIds
+    const notTodayIds = sanitizeNotTodayIds(rawNotToday)
+    const result: PersistedPreferences = {
       favoriteIds: Array.isArray(parsed.favoriteIds) ? parsed.favoriteIds : defaultPersisted.favoriteIds,
       dislikeIds: Array.isArray(parsed.dislikeIds) ? parsed.dislikeIds : defaultPersisted.dislikeIds,
-      notTodayIds: Array.isArray(parsed.notTodayIds) ? parsed.notTodayIds : defaultPersisted.notTodayIds,
+      notTodayIds,
       appliedDietIds: parsed.appliedDietIds && typeof parsed.appliedDietIds === 'object'
         ? {
             favorite: Array.isArray(parsed.appliedDietIds.favorite) ? parsed.appliedDietIds.favorite : [],
@@ -54,6 +70,11 @@ async function loadStored (): Promise<PersistedPreferences> {
           }
         : defaultPersisted.appliedDietIds
     }
+    const notTodayMigrated =
+      notTodayIds.length !== rawNotToday.length ||
+      notTodayIds.some((id, i) => id !== rawNotToday[i])
+    if (notTodayMigrated) void saveStored(result)
+    return result
   } catch {
     return defaultPersisted
   }
@@ -85,8 +106,9 @@ export const useFoodPreferencesStore = create<FoodPreferencesState>((set, get) =
   },
 
   async setNotToday (ids: string[]) {
-    const next = { ...get(), notTodayIds: ids }
-    set({ notTodayIds: ids })
+    const clean = sanitizeNotTodayIds(ids)
+    const next = { ...get(), notTodayIds: clean }
+    set({ notTodayIds: clean })
     await saveStored(next)
   },
 
@@ -101,6 +123,9 @@ export const useFoodPreferencesStore = create<FoodPreferencesState>((set, get) =
 
   async updateLists (updates: Partial<Pick<PersistedPreferences, 'favoriteIds' | 'dislikeIds' | 'notTodayIds'>>) {
     const next = { ...get(), ...updates }
+    if (updates.notTodayIds != null) {
+      next.notTodayIds = sanitizeNotTodayIds(updates.notTodayIds)
+    }
     set(next)
     await saveStored(next)
   },

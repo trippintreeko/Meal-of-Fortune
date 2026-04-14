@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, Modal } from 'react-native'
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, Modal, Linking } from 'react-native'
 import { useRouter } from 'expo-router'
 import { Mail, Check } from 'lucide-react-native'
 import { useThemeColors } from '@/hooks/useTheme'
@@ -15,6 +15,7 @@ const isEmailAlreadyInUse = (msg: string | null) =>
   !!msg && /user already registered|already been registered|email.*already|already in use/i.test(msg)
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const PRIVACY_POLICY_URL = 'https://sites.google.com/view/mealoffortune-privacy-policy/home?authuser=1'
 
 export default function RegisterScreen () {
   const router = useRouter()
@@ -151,7 +152,7 @@ export default function RegisterScreen () {
               I have read and agree to the{' '}
               <Text style={[styles.agreementLink, { color: colors.primary }]} onPress={() => router.push('/profile/settings/terms')}>Terms of Service</Text>
               {' '}and{' '}
-              <Text style={[styles.agreementLink, { color: colors.primary }]} onPress={() => router.push('/profile/settings/privacy-policy')}>Privacy Policy</Text>.
+              <Text style={[styles.agreementLink, { color: colors.primary }]} onPress={() => { void Linking.openURL(PRIVACY_POLICY_URL) }}>Privacy Policy</Text>.
             </Text>
           </View>
         </View>

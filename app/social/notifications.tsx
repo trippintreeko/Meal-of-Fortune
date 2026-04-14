@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native'
+import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Modal, Alert } from 'react-native'
 import { useRouter } from 'expo-router'
 import { Swipeable } from 'react-native-gesture-handler'
 import { Trash2 } from 'lucide-react-native'
@@ -18,6 +18,8 @@ export default function NotificationsScreen () {
   const [loading, setLoading] = useState(true)
   const [respondingId, setRespondingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [confirmClearOpen, setConfirmClearOpen] = useState(false)
+  const [clearingAll, setClearingAll] = useState(false)
 
   const fetchList = useCallback(() => {
     if (!profile?.id) return
@@ -75,6 +77,19 @@ export default function NotificationsScreen () {
     setDeletingId(null)
   }
 
+  const confirmClearAllNotifications = async () => {
+    if (!profile?.id || clearingAll) return
+    setClearingAll(true)
+    const { error } = await supabase.from('notifications').delete().eq('user_id', profile.id)
+    setClearingAll(false)
+    setConfirmClearOpen(false)
+    if (error) {
+      Alert.alert('Could not clear', error.message)
+      return
+    }
+    setList([])
+  }
+
   if (!isAuthenticated) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
@@ -96,11 +111,24 @@ export default function NotificationsScreen () {
   const getGroupId = (item: Notification) => (item.data as { group_id?: string })?.group_id as string | undefined
 
   return (
-    <FlatList
-      data={list}
-      keyExtractor={(item) => item.id}
-      contentContainerStyle={[styles.list, { backgroundColor: colors.background }]}
-      ListEmptyComponent={<Text style={[styles.empty, { color: colors.textMuted }]}>No notifications yet.</Text>}
+    <View style={[styles.screen, { backgroundColor: colors.background }]}>
+      {list.length > 0 ? (
+        <View style={[styles.toolbar, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity
+            style={[styles.clearAllBtn, { borderColor: colors.destructive }]}
+            onPress={() => setConfirmClearOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Clear all notifications"
+          >
+            <Text style={[styles.clearAllBtnText, { color: colors.destructive }]}>Clear all</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+      <FlatList
+        data={list}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={[styles.list, list.length === 0 && styles.listEmptyGrow]}
+        ListEmptyComponent={<Text style={[styles.empty, { color: colors.textMuted }]}>No notifications yet.</Text>}
       renderItem={({ item }) => {
         const requestId = getRequestId(item)
         const groupId = getGroupId(item)
@@ -177,12 +205,70 @@ export default function NotificationsScreen () {
           </Swipeable>
         )
       }}
-    />
+      />
+      <Modal
+        visible={confirmClearOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!clearingAll) setConfirmClearOpen(false)
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: colors.card, borderWidth: 1, borderColor: colors.border }]}>
+            <Text style={[styles.modalTitle, { color: colors.text }]}>Clear all notifications?</Text>
+            <Text style={[styles.modalBody, { color: colors.textMuted }]}>
+              This removes every notification from your inbox. Pending join requests disappear here; you can still manage the request from the group screen if needed.
+            </Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnSecondary, { backgroundColor: colors.secondaryBg }]}
+                onPress={() => setConfirmClearOpen(false)}
+                disabled={clearingAll}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel clear all"
+              >
+                <Text style={[styles.modalBtnSecondaryText, { color: colors.text }]}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: colors.destructive }]}
+                onPress={confirmClearAllNotifications}
+                disabled={clearingAll}
+                accessibilityRole="button"
+                accessibilityLabel="Confirm clear all notifications"
+              >
+                {clearingAll ? (
+                  <ActivityIndicator size="small" color={colors.primaryText} />
+                ) : (
+                  <Text style={[styles.modalBtnDangerText, { color: colors.primaryText }]}>Clear all</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </View>
   )
 }
 
 const styles = StyleSheet.create({
+  screen: { flex: 1 },
+  toolbar: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth
+  },
+  clearAllBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1
+  },
+  clearAllBtnText: { fontSize: 14, fontWeight: '600' },
   list: { padding: 20, flexGrow: 1 },
+  listEmptyGrow: { flexGrow: 1 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   empty: { textAlign: 'center', color: '#94a3b8', fontSize: 15 },
   card: { backgroundColor: '#fff', borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: '#e2e8f0' },
@@ -202,5 +288,19 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     marginBottom: 12
   },
-  deleteActionText: { color: '#fff', fontSize: 12, fontWeight: '600', marginTop: 4 }
+  deleteActionText: { color: '#fff', fontSize: 12, fontWeight: '600', marginTop: 4 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'center',
+    padding: 24
+  },
+  modalCard: { borderRadius: 16, padding: 22 },
+  modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 10 },
+  modalBody: { fontSize: 15, lineHeight: 22, marginBottom: 22 },
+  modalActions: { flexDirection: 'row', gap: 12 },
+  modalBtn: { flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center' },
+  modalBtnSecondary: {},
+  modalBtnSecondaryText: { fontSize: 16, fontWeight: '600' },
+  modalBtnDangerText: { fontSize: 16, fontWeight: '600' }
 })

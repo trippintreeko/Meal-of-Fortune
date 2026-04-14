@@ -10,7 +10,7 @@ import {
   useImperativeHandle,
   type ReactNode
 } from 'react'
-import { View, Text, StyleSheet, Platform, Pressable } from 'react-native'
+import { View, Text, StyleSheet, Platform, Pressable, BackHandler } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, {
   runOnJS,
@@ -40,11 +40,33 @@ const ZONE_MERGE = 44
 /** Per stacked card incl. gap — keep in sync with `stackedBlob` */
 const BLOB_STACK_UNIT = 66
 
+function hashStringToInt (value: string): number {
+  let h = 2166136261
+  for (let i = 0; i < value.length; i++) {
+    h ^= value.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return h >>> 0
+}
+
+function staggerDelayMs (
+  entranceKey: number,
+  eventId: string,
+  slot: MealSlot,
+  idx: number,
+  maxJitterMs: number
+): number {
+  const h = hashStringToInt(`${entranceKey}|${eventId}|${slot}|${idx}`)
+  return Math.round((h % 1000) / 1000 * maxJitterMs)
+}
+
 export type WeekTimeGridHandle = {
   resolveSavedMealDrop: (absoluteX: number, absoluteY: number) => {
     dateKey: string
     slot: MealSlot
   } | null
+  /** Exit wiggle mode and clear any in-progress planner drag (e.g. when leaving the screen). */
+  cancelPlannerTransformMode: () => void
 }
 
 type Props = {
@@ -63,6 +85,15 @@ type Props = {
   onDragActiveChange?: (active: boolean) => void
   savedMealDragging?: boolean
   savedMealDragAt?: { ax: number; ay: number } | null
+  /** Entrance animation for meal blobs (slides in from right after week grid scrolls). */
+  blobsEntranceKey?: number
+  blobsEntranceDelayMs?: number
+  blobsEntranceOffsetX?: number
+  /**
+   * Bump when the planner updates from a saved-meal drop or in-grid move so blobs stay visible
+   * without replaying the slide-in. Reset to 0 when the calendar tab regains focus (with blobsEntranceKey).
+   */
+  plannerSkipEntranceToken?: number
   /** Parent can auto-scroll when finger nears screen top/bottom during event drag */
   onDragScreenMove?: (absoluteX: number, absoluteY: number) => void
   /** Floating drag preview (finger position + meal info) */
@@ -201,6 +232,9 @@ function MealBlob ({
   mealColor,
   colors,
   blobTitleColor,
+  blobsEntranceKey,
+  blobsEntranceDelayMs,
+  blobsEntranceOffsetX,
   onOpenDay,
   onOpenMeal,
   isDraggingThis,
@@ -211,13 +245,18 @@ function MealBlob ({
   showSlotHeader,
   transformMode,
   onEnterTransformMode,
-  onDeletePlannerEvent
+  onDeletePlannerEvent,
+  plannerSkipEntranceToken = 0
 }: {
   event: CalendarEvent
   slot: MealSlot
   mealColor?: string
   colors: { text: string; muted: string; primary: string }
   blobTitleColor: string
+  blobsEntranceKey?: number
+  blobsEntranceDelayMs?: number
+  blobsEntranceOffsetX?: number
+  plannerSkipEntranceToken?: number
   onOpenDay: () => void
   onOpenMeal?: () => void
   isDraggingThis: boolean
@@ -232,6 +271,9 @@ function MealBlob ({
 }) {
   const t = slotTheme(slot, colors.primary, mealColor)
   const rot = useSharedValue(0)
+  const entrance = useSharedValue(blobsEntranceKey ? 0 : 1)
+  /** Tracks wiggle mode across renders so we can skip slide-in when it ends (tap empty space, navigate away, etc.). */
+  const wasWiggleRef = useRef(false)
 
   useEffect(() => {
     if (gesturesDisabled) return
@@ -249,6 +291,49 @@ function MealBlob ({
       rot.value = withTiming(0, { duration: 120 })
     }
   }, [transformMode, gesturesDisabled, rot])
+
+  useEffect(() => {
+    const exitingWiggle = wasWiggleRef.current && !transformMode
+    wasWiggleRef.current = transformMode
+
+    if (!blobsEntranceKey) {
+      entrance.value = 1
+      return
+    }
+    // Wiggle / rearrange: skip slide-in so blobs stay visible when a meal remounts in a new day/slot after a drag.
+    if (transformMode) {
+      entrance.value = 1
+      return
+    }
+    if (gesturesDisabled) return
+    // Saved-meal drop or wiggle move: show immediately, no slide ease-in
+    if (plannerSkipEntranceToken > 0) {
+      entrance.value = 1
+      return
+    }
+    // Dismiss wiggle (empty tap, etc.): do not replay staggered slide-in
+    if (exitingWiggle) {
+      entrance.value = 1
+      return
+    }
+    entrance.value = 0
+    const delay = blobsEntranceDelayMs ?? 0
+    const timer = setTimeout(() => {
+      entrance.value = withTiming(1, {
+        duration: 360,
+        easing: Easing.out(Easing.cubic)
+      })
+    }, delay)
+    return () => clearTimeout(timer)
+  }, [blobsEntranceKey, blobsEntranceDelayMs, transformMode, gesturesDisabled, plannerSkipEntranceToken, entrance])
+
+  const entranceStyle = useAnimatedStyle(() => {
+    const offsetX = blobsEntranceOffsetX ?? 80
+    return {
+      opacity: entrance.value,
+      transform: [{ translateX: offsetX * (1 - entrance.value) }]
+    }
+  })
 
   const shakeStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${rot.value}deg` }]
@@ -332,6 +417,7 @@ function MealBlob ({
       style={[
         styles.stackedBlob,
         shakeStyle,
+        entranceStyle,
         {
           backgroundColor: t.bg,
           borderColor: t.accent + '55',
@@ -417,6 +503,10 @@ const WeekTimeGrid = forwardRef<WeekTimeGridHandle, Props>(function WeekTimeGrid
     onDragFinger,
     onEventDragBegan,
     onDeletePlannerEvent,
+    blobsEntranceKey,
+    blobsEntranceDelayMs,
+    blobsEntranceOffsetX,
+    plannerSkipEntranceToken = 0,
     savedMealDragging = false,
     savedMealDragAt
   },
@@ -424,6 +514,7 @@ const WeekTimeGrid = forwardRef<WeekTimeGridHandle, Props>(function WeekTimeGrid
 ) {
   const colors = useThemeColors()
   const { resolvedTheme } = useTheme()
+  const isLight = resolvedTheme !== 'dark'
   const weekBlobTitleColor =
     resolvedTheme === 'dark' ? BLOB_TITLE_DARK_MODE : colors.text
   const [transformMode, setTransformMode] = useState(false)
@@ -462,6 +553,30 @@ const WeekTimeGrid = forwardRef<WeekTimeGridHandle, Props>(function WeekTimeGrid
     setTransformMode(false)
   }, [])
 
+  const cancelPlannerTransformMode = useCallback(() => {
+    setTransformMode(false)
+    draggingIdRef.current = null
+    hoverRef.current = null
+    hoverSlotRef.current = null
+    setDraggingId(null)
+    setHoverDateKey(null)
+    setEventDragHoverSlot(null)
+    onDragFinger?.(null)
+    onDragActiveChange?.(false)
+    endCommittedRef.current = false
+  }, [onDragFinger, onDragActiveChange])
+
+  /** Android back / predictive back: first back exits wiggle (consumes event); further backs use normal navigation. */
+  useEffect(() => {
+    if (Platform.OS !== 'android') return
+    if (!transformMode) return
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      cancelPlannerTransformMode()
+      return true
+    })
+    return () => sub.remove()
+  }, [transformMode, cancelPlannerTransformMode])
+
   useImperativeHandle(
     ref,
     () => ({
@@ -480,9 +595,10 @@ const WeekTimeGrid = forwardRef<WeekTimeGridHandle, Props>(function WeekTimeGrid
           }
         }
         return null
-      }
+      },
+      cancelPlannerTransformMode
     }),
-    [weekDates]
+    [weekDates, cancelPlannerTransformMode]
   )
 
   const measureCell = useCallback((dk: string) => {
@@ -627,6 +743,13 @@ const WeekTimeGrid = forwardRef<WeekTimeGridHandle, Props>(function WeekTimeGrid
             mealColor={resolveMealColor?.(ev)}
             colors={{ text: colors.text, muted: colors.textMuted, primary: colors.primary }}
             blobTitleColor={weekBlobTitleColor}
+            blobsEntranceKey={blobsEntranceKey}
+            blobsEntranceDelayMs={
+              blobsEntranceKey && blobsEntranceDelayMs != null
+                ? blobsEntranceDelayMs + staggerDelayMs(blobsEntranceKey, ev.id, slot, idx, 220)
+                : undefined
+            }
+            blobsEntranceOffsetX={blobsEntranceOffsetX}
             onOpenDay={() => onOpenDay(dk)}
             onOpenMeal={onOpenMeal ? () => onOpenMeal(ev) : undefined}
             isDraggingThis={draggingId === ev.id}
@@ -638,6 +761,7 @@ const WeekTimeGrid = forwardRef<WeekTimeGridHandle, Props>(function WeekTimeGrid
             transformMode={transformMode}
             onEnterTransformMode={enterTransformMode}
             onDeletePlannerEvent={onDeletePlannerEvent}
+            plannerSkipEntranceToken={plannerSkipEntranceToken}
           />
         ))}
       </View>
@@ -650,7 +774,7 @@ const WeekTimeGrid = forwardRef<WeekTimeGridHandle, Props>(function WeekTimeGrid
       style={[
         styles.wrap,
         {
-          backgroundColor: colors.card,
+          backgroundColor: isLight ? colors.background : colors.card,
           overflow: transformMode ? 'visible' : 'hidden'
         }
       ]}
@@ -757,7 +881,9 @@ const WeekTimeGrid = forwardRef<WeekTimeGridHandle, Props>(function WeekTimeGrid
                 {
                   backgroundColor: showDropHighlight
                     ? colors.primary + '18'
-                    : colors.background + (expandedForMeals ? '40' : '28'),
+                    : isLight
+                      ? colors.secondaryBg
+                      : colors.background + (expandedForMeals ? '40' : '28'),
                   borderWidth: showDropHighlight ? 2 : 0,
                   borderColor: showDropHighlight ? colors.primary + '88' : 'transparent'
                 },

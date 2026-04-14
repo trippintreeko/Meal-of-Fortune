@@ -44,7 +44,7 @@ export default function LoginScreen () {
     setLoading(true)
     const { error } = await signIn(emailTrimmed, password)
     setLoading(false)
-    if (!error) router.replace('/social/groups')
+    if (!error) router.replace('/')
   }
 
   return (

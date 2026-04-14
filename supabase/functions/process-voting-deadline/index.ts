@@ -70,14 +70,20 @@ serve(async (req) => {
       ? await supabase.from('meal_suggestions').select('suggestion').eq('id', winnerId).single().then(r => r.data?.suggestion)
       : null
 
+    const bodyText = winnerSuggestion
+      ? `The group chose: ${winnerSuggestion}`
+      : 'Voting has ended.'
     for (const m of members ?? []) {
-      await supabase.from('notifications').insert({
-        user_id: m.user_id,
-        type: 'result_ready',
-        title: 'Voting results ready',
-        body: winnerSuggestion ? `The group chose: ${winnerSuggestion}` : 'Voting has ended.',
-        data: { session_id: session.id }
+      const { error: rpcErr } = await supabase.rpc('create_in_app_notification_if_allowed', {
+        p_user_id: m.user_id,
+        p_type: 'result_ready',
+        p_title: 'Voting results ready',
+        p_body: bodyText,
+        p_data: { session_id: session.id, group_id: session.group_id }
       })
+      if (rpcErr) {
+        console.error('[process-voting-deadline] notify member', m.user_id, rpcErr.message)
+      }
     }
     processed++
   }

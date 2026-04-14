@@ -24,6 +24,7 @@ import {
   mealViolatesDislikesOnly,
   mergeFavoriteAppliedAllergyExcludedNames
 } from '@/lib/meal-avoid-lists'
+import { buildIngredientGroupIndex, expandIdsByIngredientGroups } from '@/lib/ingredient-grouping'
 
 type GalleryRow = {
   id: string
@@ -197,11 +198,31 @@ export default function CookingSortRound ({
         fetchFoodNamesForPreferenceIds([...dislikeIds])
       ])
       if (cancelled) return
+
+      const allCollectedIds = [...collectedIds.baseIds, ...collectedIds.proteinIds, ...collectedIds.vegetableIds]
+      const { data: ingredientRows, error: ingredientError } = await supabase
+        .from('ingredient_assets')
+        .select('spoonacular_ingredient_id, name')
+      if (cancelled) return
+
+      const expandedCollectedIds = !ingredientError && ingredientRows?.length
+        ? expandIdsByIngredientGroups(
+            allCollectedIds,
+            buildIngredientGroupIndex(ingredientRows as Array<{ spoonacular_ingredient_id: number; name: string | null }>)
+          )
+        : Array.from(new Set(allCollectedIds))
+
+      const collectedExpanded = {
+        baseIds: expandedCollectedIds,
+        proteinIds: [] as string[],
+        vegetableIds: [] as string[]
+      }
+
       const counts: Record<string, number> = {}
       for (const method of MEAL_COOKING_METHODS) {
         counts[method] = countMealsForMethod(
           method,
-          collectedIds,
+          collectedExpanded,
           dislikeSet,
           dislikeNames,
           rows,

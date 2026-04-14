@@ -17,7 +17,7 @@ import {
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useFocusEffect } from '@react-navigation/native'
-import { User, Settings, Heart, Ban, LogIn, UserPlus, LogOut, Sun, Moon } from 'lucide-react-native'
+import { User, Settings, Heart, LogIn, UserPlus, LogOut, Sun, Moon } from 'lucide-react-native'
 import { useThemeColors, useTheme } from '@/hooks/useTheme'
 import { useSocialAuth } from '@/hooks/useSocialAuth'
 import { useTabHeaderSlide } from '@/hooks/useTabHeaderSlide'
@@ -61,8 +61,7 @@ export default function ProfileScreen () {
   const slide2 = useRef(new Animated.Value(0)).current
   const slide3 = useRef(new Animated.Value(0)).current
   const slide4 = useRef(new Animated.Value(0)).current
-  const slide5 = useRef(new Animated.Value(0)).current
-  const profileSlides = [slide1, slide2, slide3, slide4, slide5]
+  const profileSlides = [slide1, slide2, slide3, slide4]
 
   useFocusEffect(
     useCallback(() => {
@@ -83,7 +82,7 @@ export default function ProfileScreen () {
       return () => {
         profileSlides.forEach((s) => s.setValue(0))
       }
-    }, [slide1, slide2, slide3, slide4, slide5])
+    }, [slide1, slide2, slide3, slide4])
   )
 
   const profileSlideStyle = (s: Animated.Value) => ({
@@ -93,11 +92,11 @@ export default function ProfileScreen () {
 
   const handleShareFriendCode = () => {
     if (!profile?.friend_code) return
-    const message = `Add me on Meal Vote! My friend code: ${profile.friend_code}`
+    const message = `Add me on Meal of Fortune! My friend code: ${profile.friend_code}`
     if (Platform.OS === 'web') {
       if (typeof navigator !== 'undefined' && navigator.share) {
         navigator.share({
-          title: 'My Meal Vote friend code',
+          title: 'My Meal of Fortune friend code',
           text: message
         }).catch(() => {
           if (profile?.friend_code) copyToClipboardWeb(profile.friend_code)
@@ -107,7 +106,7 @@ export default function ProfileScreen () {
       }
       return
     }
-    Share.share({ message, title: 'My Meal Vote friend code' })
+    Share.share({ message, title: 'My Meal of Fortune friend code' })
   }
 
   function copyToClipboardWeb (text: string) {
@@ -160,7 +159,7 @@ export default function ProfileScreen () {
                       <Text style={styles.copyBtnText}>Share</Text>
                     </TouchableOpacity>
                   </View>
-                  <Text style={[styles.friendCodeHint, { color: colors.textMuted }]}>Share this code so friends can add you in Meal Vote.</Text>
+                  <Text style={[styles.friendCodeHint, { color: colors.textMuted }]}>Share this code so friends can add you in Meal of Fortune.</Text>
                 </>
               ) : null}
               {profile.dietary_restrictions?.length > 0 ? (
@@ -227,21 +226,6 @@ export default function ProfileScreen () {
           <Animated.View style={profileSlideStyle(slide3)}>
             <TouchableOpacity
               style={[styles.option, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}
-              onPress={() => router.push('/profile/settings/dont-want-today')}
-            >
-              <Ban size={24} color={colors.destructive} />
-              <View style={styles.optionText}>
-                <Text style={[styles.optionTitle, { color: colors.text }]}>Don't Want Today</Text>
-                <Text style={[styles.optionDescription, { color: colors.textMuted }]}>
-                  Temporary food exclusions
-                </Text>
-              </View>
-            </TouchableOpacity>
-          </Animated.View>
-
-          <Animated.View style={profileSlideStyle(slide4)}>
-            <TouchableOpacity
-              style={[styles.option, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}
               onPress={() => router.push('/profile/settings')}
             >
               <Settings size={24} color={colors.textMuted} />
@@ -254,7 +238,7 @@ export default function ProfileScreen () {
             </TouchableOpacity>
           </Animated.View>
 
-          <Animated.View style={profileSlideStyle(slide5)}>
+          <Animated.View style={profileSlideStyle(slide4)}>
           <View style={[styles.themeRow, { backgroundColor: colors.card, borderColor: colors.cardBorder }]}>
             <Text style={[styles.themeLabel, { color: colors.textMuted }]}>Theme</Text>
             <Pressable

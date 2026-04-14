@@ -13,7 +13,7 @@ try {
 const baseExpo = {
   name: 'Meal of Fortune',
   slug: 'bolt-expo-nativewind',
-  version: '1.0.2',
+  version: '0.0.1',
   orientation: 'portrait',
   icon: './assets/images/icon.png',
   scheme: 'myapp',
@@ -29,7 +29,7 @@ const baseExpo = {
   },
   android: {
     package: 'com.trippintreeko.mealoffortune',
-    versionCode: 3
+    versionCode: 5
   },
   web: {
     bundler: 'metro',
@@ -56,6 +56,8 @@ const baseExpo = {
   extra: {
     supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? '',
     supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '',
+    /** Ko-fi page opened from Help & Support (set EXPO_PUBLIC_KOFI_URL in .env, e.g. https://ko-fi.com/yourname) */
+    kofiUrl: (process.env.EXPO_PUBLIC_KOFI_URL ?? '').trim(),
     eas: {
       projectId: '5c52dfe0-94f7-4e98-971f-ff3a06d7915a'
     }

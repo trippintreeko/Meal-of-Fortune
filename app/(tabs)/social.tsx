@@ -64,7 +64,7 @@ export default function SocialScreen () {
         <View style={[styles.header, { backgroundColor: colors.card, borderBottomColor: colors.border }]}>
           <Animated.View style={[styles.headerContent, headerSlideStyle]}>
             <Users size={32} color={colors.primary} />
-            <Text style={[styles.title, { color: colors.text }]}>Meal Vote</Text>
+            <Text style={[styles.title, { color: colors.text }]}>Meal of Fortune</Text>
             <Text style={[styles.subtitle, { color: colors.textMuted }]}>
               Vote with friends and family on what to eat
             </Text>

@@ -1,11 +1,9 @@
-import { View, Text, StyleSheet, Modal, TouchableOpacity, Linking, Dimensions } from 'react-native'
+import { View, Text, StyleSheet, Modal, TouchableOpacity, Dimensions, Alert } from 'react-native'
 import { useRouter } from 'expo-router'
 import { X } from 'lucide-react-native'
 import { MealDetailCard } from '@/components/MealDetailModal'
 import { useThemeColors } from '@/hooks/useTheme'
 import type { SavedMeal } from '@/types/calendar'
-import { getRecipeSearchUrl } from '@/lib/recipes/search'
-
 const { width: SCREEN_WIDTH } = Dimensions.get('window')
 const CARD_WIDTH = SCREEN_WIDTH * 0.88
 
@@ -27,7 +25,10 @@ export default function WeekPlannerMealModal ({ visible, meal, onClose }: Props)
       router.push(`/recipe/${recipeGalleryId}`)
       return
     }
-    void Linking.openURL(getRecipeSearchUrl(m.title))
+    Alert.alert(
+      'Recipe unavailable',
+      'We couldn\'t link this meal to an in-app recipe. It may need to be saved from the food gallery with a matching dish.'
+    )
   }
 
   const handleGrocery = (m: SavedMeal, recipeGalleryId: string | null) => {
@@ -36,8 +37,9 @@ export default function WeekPlannerMealModal ({ visible, meal, onClose }: Props)
       router.push(`/recipe/${recipeGalleryId}?grocery=1`)
       return
     }
-    void Linking.openURL(
-      `https://www.google.com/search?q=${encodeURIComponent(`${m.title} ingredients grocery list`)}`
+    Alert.alert(
+      'Grocery list unavailable',
+      'We need a linked gallery recipe to build a grocery list for this meal.'
     )
   }
 

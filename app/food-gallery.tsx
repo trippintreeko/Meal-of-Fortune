@@ -3,6 +3,7 @@ import {
   View,
   Text,
   StyleSheet,
+  Pressable,
   TouchableOpacity,
   FlatList,
   TextInput,
@@ -18,6 +19,7 @@ import * as ImagePicker from 'expo-image-picker'
 import * as FileSystem from 'expo-file-system/legacy'
 import { ChevronLeft, ChevronDown, Heart, Search, List, LayoutGrid, X, Camera } from 'lucide-react-native'
 import { useThemeColors } from '@/hooks/useTheme'
+import { useSystemBack } from '@/hooks/useSystemBack'
 import { getGalleryMealsForFeeling, getFeelingById } from '@/lib/feelings'
 import { useCalendarStore } from '@/store/calendar-store'
 import { useFoodPreferencesStore } from '@/store/food-preferences-store'
@@ -25,7 +27,9 @@ import { useMealPhotosStore } from '@/store/meal-photos-store'
 import { supabase } from '@/lib/supabase'
 import { getBestRecipeImageUrlForViewing, mergeRecipeAndStoredImageUrls } from '@/lib/spoonacular-images'
 import { MealImageFullscreenViewer } from '@/components/MealImageFullscreenViewer'
+import SwipeCard from '@/components/SwipeCard'
 import { formatRecipeTitle } from '@/lib/format'
+import { getMethodDisplayPast } from '@/lib/cooking-methods'
 import { normalizeFoodItemName } from '@/lib/diets'
 import {
   fetchBlockedNamesForDislikesAndNotToday,
@@ -45,9 +49,11 @@ import {
 import type { GalleryMeal } from '@/lib/feelings'
 import type { SavedMeal } from '@/types/calendar'
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window')
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window')
 const PAD = 16
 const GAP = 10
+/** Random swipe deck size when browsing by feeling (matches minigame results style). */
+const FEELING_SWIPE_DECK_SIZE = 25
 
 type ViewMode = 'list' | 'big' | 'small'
 
@@ -116,9 +122,7 @@ const FEELING_ORDER = [
   'energy_booster',
   'comforting',
   'refreshing',
-  'cozy',
   'indulgent',
-  'simple',
   'adventurous'
 ]
 
@@ -135,6 +139,15 @@ function pickPrimaryFeelingId (feelingIds: string[]): string | null {
     if (feelingIds.includes(id)) return id
   }
   return feelingIds[0] ?? null
+}
+
+/** Same logic as feeling-filtered gallery: primary vibe color first, then base-group accent. */
+function resolveGalleryMealCardColor (feelingIdsRaw: unknown, baseGroup: string | null): string {
+  const feelingIds = normalizeFeelingIdList(feelingIdsRaw)
+  const primaryFeelingId = pickPrimaryFeelingId(feelingIds)
+  const feelingColor = primaryFeelingId ? getFeelingById(primaryFeelingId)?.color : undefined
+  if (feelingColor) return feelingColor
+  return BASE_GROUP_COLORS[baseGroup ?? 'any'] ?? BASE_GROUP_COLORS.any
 }
 
 /** Fetch Spoonacular recipe details (image, title, servings, instructions, cuisine) for the given recipe ids. */
@@ -300,9 +313,28 @@ function MealCard ({
 export default function FoodGalleryScreen () {
   const router = useRouter()
   const colors = useThemeColors()
-  const params = useLocalSearchParams<{ feeling?: string; food?: string }>()
+  const params = useLocalSearchParams<{ feeling?: string; food?: string; browse?: string }>()
   const feelingId = (params.feeling ?? '').trim() || null
   const foodId = (params.food ?? '').trim() || null
+  const browseRaw = params.browse
+  const browseParam: 'gallery' | 'swipe' =
+    (Array.isArray(browseRaw) ? browseRaw[0] : browseRaw) === 'swipe' ? 'swipe' : 'gallery'
+
+  const handleGalleryBack = useCallback(() => {
+    if (feelingId != null && feelingId !== '') {
+      if (router.canGoBack()) {
+        router.back()
+      } else {
+        ;(router.replace as (href: string) => void)('/game/feeling')
+      }
+      return
+    }
+    router.back()
+  }, [feelingId, router])
+
+  const isFromFeelingFlow = feelingId != null && feelingId !== ''
+  useSystemBack(handleGalleryBack, isFromFeelingFlow)
+
   const loadPreferences = useFoodPreferencesStore(s => s.load)
   const dislikeIds = useFoodPreferencesStore(s => s.dislikeIds)
   const notTodayIds = useFoodPreferencesStore(s => s.notTodayIds)
@@ -324,8 +356,16 @@ export default function FoodGalleryScreen () {
   const [modalAddingPhoto, setModalAddingPhoto] = useState(false)
   /** Full-screen meal image (higher-res Spoonacular URL when applicable) */
   const [fullScreenViewerUrl, setFullScreenViewerUrl] = useState<string | null>(null)
+  /** When opened with ?feeling=&browse=swipe, show results-style swipe deck (browse set from feeling screen). */
+  const [feelingBrowseMode, setFeelingBrowseMode] = useState<'gallery' | 'swipe'>('gallery')
+  const [feelingSwipeDeck, setFeelingSwipeDeck] = useState<ExplorerMeal[]>([])
+  const [feelingSwipeStage, setFeelingSwipeStage] = useState<'swipe' | 'complete'>('swipe')
+  const [feelingSwipeIndex, setFeelingSwipeIndex] = useState(0)
+  const [feelingSwipeSaved, setFeelingSwipeSaved] = useState<ExplorerMeal[]>([])
   /** Dislikes + Not today + favorite-tab allergy diets (e.g. nut allergy) — matched to recipe ingredients */
   const [blockedFoodNamesNormalized, setBlockedFoodNamesNormalized] = useState<Set<string>>(() => new Set())
+
+  const surpriseMeGlow = true
 
   const closeDropdownsAndSearch = () => {
     setSearchExpanded(false)
@@ -390,13 +430,17 @@ export default function FoodGalleryScreen () {
           ? ingredientNamesMap.get(row.spoonacular_recipe_id) ?? []
           : []
         const existingUrls = Array.isArray(row.image_urls) ? row.image_urls : []
-        const mergedUrls = mergeRecipeAndStoredImageUrls(recipe?.image_url, existingUrls)
+        const mergedUrls = mergeRecipeAndStoredImageUrls(
+          recipe?.image_url,
+          existingUrls,
+          row.spoonacular_recipe_id
+        )
         const imageUrls = mergedUrls.length > 0 ? mergedUrls : undefined
         return {
           id: row.id,
           title: row.title,
           description: row.description ?? undefined,
-          color: BASE_GROUP_COLORS[row.base_group ?? 'any'] ?? BASE_GROUP_COLORS.any,
+          color: resolveGalleryMealCardColor(row.feeling_ids, row.base_group),
           base: '',
           protein: '',
           vegetable: '',
@@ -455,8 +499,6 @@ export default function FoodGalleryScreen () {
       if (cancelled) return
       const mapped: ExplorerMeal[] = rows.map((row) => {
         const feelingIds = normalizeFeelingIdList(row.feeling_ids)
-        const primaryFeelingId = pickPrimaryFeelingId(feelingIds)
-        const feelingColor = primaryFeelingId ? getFeelingById(primaryFeelingId)?.color : null
         const recipe = row.spoonacular_recipe_id != null ? recipeMap.get(row.spoonacular_recipe_id) : undefined
         const ingredientIds = row.spoonacular_recipe_id != null
           ? ingredientIdsMap.get(row.spoonacular_recipe_id) ?? []
@@ -465,13 +507,17 @@ export default function FoodGalleryScreen () {
           ? ingredientNamesMap.get(row.spoonacular_recipe_id) ?? []
           : []
         const existingUrls = Array.isArray(row.image_urls) ? row.image_urls : []
-        const mergedUrls = mergeRecipeAndStoredImageUrls(recipe?.image_url, existingUrls)
+        const mergedUrls = mergeRecipeAndStoredImageUrls(
+          recipe?.image_url,
+          existingUrls,
+          row.spoonacular_recipe_id
+        )
         const imageUrls = mergedUrls.length > 0 ? mergedUrls : undefined
         return {
           id: row.id,
           title: row.title,
           description: row.description ?? undefined,
-          color: feelingColor ?? (BASE_GROUP_COLORS[row.base_group ?? 'any'] ?? BASE_GROUP_COLORS.any),
+          color: resolveGalleryMealCardColor(row.feeling_ids, row.base_group),
           base: '',
           protein: '',
           vegetable: '',
@@ -525,6 +571,49 @@ export default function FoodGalleryScreen () {
       })
       .map(m => ({ ...m, baseGroup: (m as ExplorerMeal).baseGroup ?? 'featured' }))
   }, [feelingMealsFromDb, rawFeelingMeals, blockedFoodNamesNormalized, isDisliked, isNotToday, isFavorite])
+
+  const feelingMealsRef = useRef<ExplorerMeal[]>([])
+  feelingMealsRef.current = feelingMeals
+
+  useEffect(() => {
+    if (feelingId == null || feelingId === '') {
+      setFeelingBrowseMode('gallery')
+      setFeelingSwipeDeck([])
+      setFeelingSwipeStage('swipe')
+      setFeelingSwipeIndex(0)
+      setFeelingSwipeSaved([])
+      return
+    }
+    const wantSwipe = browseParam === 'swipe'
+    setFeelingBrowseMode(wantSwipe ? 'swipe' : 'gallery')
+    if (!wantSwipe) {
+      setFeelingSwipeDeck([])
+      setFeelingSwipeStage('swipe')
+      setFeelingSwipeIndex(0)
+      setFeelingSwipeSaved([])
+      return
+    }
+    const poolSource = feelingMealsRef.current
+    if (poolSource.length === 0) {
+      setFeelingSwipeDeck([])
+      setFeelingSwipeStage('swipe')
+      setFeelingSwipeIndex(0)
+      setFeelingSwipeSaved([])
+      return
+    }
+    const pool = [...poolSource]
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      const a = pool[i]!
+      pool[i] = pool[j]!
+      pool[j] = a
+    }
+    const take = Math.min(FEELING_SWIPE_DECK_SIZE, pool.length)
+    setFeelingSwipeDeck(pool.slice(0, take))
+    setFeelingSwipeStage('swipe')
+    setFeelingSwipeIndex(0)
+    setFeelingSwipeSaved([])
+  }, [feelingId, browseParam, feelingMeals.length])
 
   const foodMeals = useMemo((): ExplorerMeal[] => {
     if (foodId == null || foodId === '' || foodName == null || foodName === '') return []
@@ -681,6 +770,75 @@ export default function FoodGalleryScreen () {
     }
   }
 
+  const switchToFeelingGallery = useCallback(() => {
+    setFeelingBrowseMode('gallery')
+    setFeelingSwipeDeck([])
+    setFeelingSwipeStage('swipe')
+    setFeelingSwipeIndex(0)
+    setFeelingSwipeSaved([])
+    router.setParams({ browse: 'gallery' })
+  }, [router])
+
+  const startFeelingSwipeDeck = useCallback(() => {
+    const pool = [...allItems]
+    if (pool.length === 0) return
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      const a = pool[i]!
+      pool[i] = pool[j]!
+      pool[j] = a
+    }
+    const take = Math.min(FEELING_SWIPE_DECK_SIZE, pool.length)
+    setFeelingSwipeDeck(pool.slice(0, take))
+    setFeelingSwipeStage('swipe')
+    setFeelingSwipeIndex(0)
+    setFeelingSwipeSaved([])
+    setFeelingBrowseMode('swipe')
+  }, [allItems])
+
+  const handleFeelingSwipe = useCallback(
+    (direction: 'left' | 'right') => {
+      const current = feelingSwipeDeck[feelingSwipeIndex]
+      if (!current) return
+      const nextSaved = direction === 'right' ? [...feelingSwipeSaved, current] : feelingSwipeSaved
+      if (direction === 'right') {
+        void handleWantThis(current, { shouldClose: false })
+      }
+      if (feelingSwipeIndex < feelingSwipeDeck.length - 1) {
+        setFeelingSwipeSaved(nextSaved)
+        setFeelingSwipeIndex((n) => n + 1)
+      } else {
+        setFeelingSwipeSaved(nextSaved)
+        setFeelingSwipeStage('complete')
+      }
+    },
+    [feelingSwipeDeck, feelingSwipeIndex, feelingSwipeSaved, handleWantThis]
+  )
+
+  const finishFeelingSwipeEarly = useCallback(() => {
+    setFeelingSwipeStage('complete')
+  }, [])
+
+  const chooseFeelingMealOfTheDay = useCallback(async () => {
+    const current = feelingSwipeDeck[feelingSwipeIndex]
+    if (!current) return
+    try {
+      await handleWantThis(current, { shouldClose: false })
+    } catch {
+      Alert.alert('Error', 'Could not save this meal. Try again.')
+      return
+    }
+    switchToFeelingGallery()
+    router.push({ pathname: '/recipe/[id]', params: { id: current.id } })
+  }, [feelingSwipeDeck, feelingSwipeIndex, switchToFeelingGallery, router])
+
+  const mealToSwipeDisplay = useCallback((meal: ExplorerMeal) => ({
+    title: meal.title ?? '',
+    description: meal.description,
+    cookingMethod: getMethodDisplayPast(meal.method),
+    imageUrl: meal.imageUrls?.[0] ?? null
+  }), [])
+
   const numColumns = viewMode === 'list' ? 1 : viewMode === 'big' ? 2 : 3
   const isSelectedMealAdded = useMemo(() => {
     if (!selectedMeal) return false
@@ -747,7 +905,7 @@ export default function FoodGalleryScreen () {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backButton} onPress={() => router.back()}>
+        <TouchableOpacity style={styles.backButton} onPress={handleGalleryBack}>
           <ChevronLeft size={24} color={colors.text} />
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: colors.text }]}>
@@ -755,6 +913,123 @@ export default function FoodGalleryScreen () {
         </Text>
       </View>
 
+      {feelingBrowseMode === 'swipe' && feelingSwipeDeck.length > 0
+        ? (
+          <View style={styles.feelingSwipeWrap}>
+            {feelingSwipeStage === 'complete'
+              ? (
+                <ScrollView contentContainerStyle={styles.feelingSwipeCompleteScroll} showsVerticalScrollIndicator={false}>
+                  <Text style={[styles.feelingSwipeCompleteTitle, { color: colors.text }]}>Done swiping</Text>
+                  <Text style={[styles.feelingSwipeCompleteSub, { color: colors.textMuted }]}>
+                    You added {feelingSwipeSaved.length} meal{feelingSwipeSaved.length !== 1 ? 's' : ''} to Meals I want
+                  </Text>
+                  {feelingSwipeSaved.length > 0 && (
+                    <View style={styles.feelingSwipeSavedList}>
+                      {feelingSwipeSaved.map((m) => (
+                        <View
+                          key={m.id}
+                          style={[styles.feelingSwipeSavedCard, { backgroundColor: colors.card, borderColor: colors.primary }]}
+                        >
+                          <Text style={[styles.feelingSwipeSavedTitle, { color: colors.text }]} numberOfLines={2}>
+                            {m.title}
+                          </Text>
+                          {m.description
+                            ? (
+                              <Text style={[styles.feelingSwipeSavedDesc, { color: colors.textMuted }]} numberOfLines={2}>
+                                {m.description}
+                              </Text>
+                              )
+                            : null}
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                  <TouchableOpacity
+                    style={[styles.feelingSwipePrimaryBtn, { backgroundColor: colors.primary }]}
+                    onPress={startFeelingSwipeDeck}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.feelingSwipePrimaryBtnText}>Swipe again</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.feelingSwipeSecondaryBtn, { backgroundColor: colors.secondaryBg }]}
+                    onPress={switchToFeelingGallery}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={[styles.feelingSwipeSecondaryBtnText, { color: colors.text }]}>Back to full gallery</Text>
+                  </TouchableOpacity>
+                </ScrollView>
+                )
+              : (
+                <View style={styles.feelingSwipeActive}>
+                  <View style={styles.feelingSwipeHeader}>
+                    <Text style={[styles.feelingSwipeTitle, { color: colors.text }]}>Swipe to sort</Text>
+                    <Text style={[styles.feelingSwipeCounter, { color: colors.textMuted }]}>
+                      {feelingSwipeIndex + 1} / {feelingSwipeDeck.length}
+                    </Text>
+                  </View>
+                  <View style={styles.feelingSwipeCards} pointerEvents="box-none">
+                    {[feelingSwipeIndex, feelingSwipeIndex + 1]
+                      .filter((idx) => idx >= 0 && idx < feelingSwipeDeck.length)
+                      .map((idx) => {
+                        const card = feelingSwipeDeck[idx]!
+                        const isTop = idx === feelingSwipeIndex
+                        return (
+                          <SwipeCard
+                            key={`${card.id}-${isTop ? 'top' : 'next'}`}
+                            cardDisplay={mealToSwipeDisplay(card)}
+                            onSwipe={handleFeelingSwipe}
+                            onSwipeUp={isTop ? () => { void chooseFeelingMealOfTheDay() } : undefined}
+                            isTop={isTop}
+                            themeColors={colors}
+                          />
+                        )
+                      })}
+                  </View>
+                  <View
+                    style={styles.feelingSwipeHints}
+                    accessibilityRole="text"
+                    accessibilityLabel="Swipe left to skip, swipe up to select meal of the day, swipe right to save"
+                  >
+                    <View style={styles.feelingSwipeHintItem}>
+                      <View style={[styles.feelingSwipeHintIcon, { backgroundColor: colors.destructive + '30' }]}>
+                        <Text style={styles.feelingSwipeHintEmoji}>👈</Text>
+                      </View>
+                      <Text style={[styles.feelingSwipeHintLabel, { color: colors.text }]}>Swipe left to skip</Text>
+                    </View>
+                    <View style={styles.feelingSwipeHintItem}>
+                      <View style={[styles.feelingSwipeHintIcon, styles.feelingSwipeHintIconBlue]}>
+                        <Text style={styles.feelingSwipeHintEmoji}>👆</Text>
+                      </View>
+                      <Text style={[styles.feelingSwipeHintLabel, { color: colors.text }]}>
+                        Swipe up to select
+                      </Text>
+                    </View>
+                    <View style={styles.feelingSwipeHintItem}>
+                      <View style={[styles.feelingSwipeHintIcon, { backgroundColor: colors.primary + '30' }]}>
+                        <Text style={styles.feelingSwipeHintEmoji}>👉</Text>
+                      </View>
+                      <Text style={[styles.feelingSwipeHintLabel, { color: colors.text }]}>Swipe right to save</Text>
+                    </View>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.feelingSwipeFinishEarly, { backgroundColor: colors.secondaryBg }]}
+                    onPress={finishFeelingSwipeEarly}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.feelingSwipeFinishEarlyText, { color: colors.textMuted }]}>
+                      Finish swiping — skip remaining & see results
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+                )}
+          </View>
+          )
+        : null}
+
+      {!(feelingBrowseMode === 'swipe' && feelingSwipeDeck.length > 0)
+        ? (
+      <>
       <View style={styles.filtersRow}>
         {searchExpanded
           ? (
@@ -792,7 +1067,11 @@ export default function FoodGalleryScreen () {
                 <ChevronDown size={16} color={colors.textMuted} />
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.filterBtn, { backgroundColor: colors.secondaryBg }]}
+                style={[
+                  styles.filterBtn,
+                  { backgroundColor: colors.secondaryBg },
+                  surpriseMeGlow && styles.surpriseMeGlow
+                ]}
                 onPress={handleSurpriseMe}
                 disabled={filteredItems.length === 0}
               >
@@ -923,14 +1202,24 @@ export default function FoodGalleryScreen () {
             }}
           />
           )}
+      </>
+          )
+        : null}
 
       <Modal visible={selectedMeal != null} transparent animationType="fade">
-        <TouchableOpacity
-          activeOpacity={1}
-          style={styles.modalBackdrop}
-          onPress={closeMealModal}
-        >
-          <View style={[styles.modalCard, { backgroundColor: colors.card }]}>
+        <View style={styles.modalBackdrop}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={closeMealModal}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss meal details"
+          />
+          <View
+            style={[
+              styles.modalCard,
+              { backgroundColor: colors.card, maxHeight: Math.round(SCREEN_HEIGHT * 0.88) }
+            ]}
+          >
             <TouchableOpacity style={styles.modalClose} onPress={closeMealModal}>
               <X size={24} color={colors.text} />
             </TouchableOpacity>
@@ -995,7 +1284,13 @@ export default function FoodGalleryScreen () {
                     </Text>
                   </TouchableOpacity>
                 </View>
-                <ScrollView style={styles.modalScroll}>
+                <ScrollView
+                  style={styles.modalScroll}
+                  contentContainerStyle={styles.modalScrollContent}
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator
+                  nestedScrollEnabled
+                >
                   <Text style={[styles.modalTitle, { color: colors.text }]}>{formatRecipeTitle(selectedMeal.title ?? '')}</Text>
                   {selectedMeal.description
                     ? <Text style={[styles.modalDesc, { color: colors.textMuted }]}>{selectedMeal.description}</Text>
@@ -1008,36 +1303,38 @@ export default function FoodGalleryScreen () {
                     </View>
                   )}
                 </ScrollView>
-                <TouchableOpacity
-                  style={[
-                    styles.modalWantBtn,
-                    { backgroundColor: colors.primary }
-                  ]}
-                  onPress={async () => {
-                    if (isSelectedMealAdded && selectedSavedMealId) {
-                      await removeSavedMeal(selectedSavedMealId)
-                      return
-                    }
-                    await handleWantThis(selectedMeal, { shouldClose: false })
-                  }}
-                >
-                  <Heart size={22} color="#ffffff" fill={isSelectedMealAdded ? '#ffffff' : 'transparent'} />
-                  <Text style={styles.modalWantText}>{isSelectedMealAdded ? 'Added' : 'Add this to the list'}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.modalRecipeBtn, { backgroundColor: colors.secondaryBg, borderColor: colors.cardBorder }]}
-                  onPress={() => {
-                    closeMealModal()
-                    router.push({ pathname: '/recipe/[id]', params: { id: selectedMeal.id } })
-                  }}
-                >
-                  <Text style={[styles.modalRecipeText, { color: colors.text }]}>Recipe</Text>
-                </TouchableOpacity>
+                <View style={styles.modalActions}>
+                  <TouchableOpacity
+                    style={[
+                      styles.modalWantBtn,
+                      { backgroundColor: colors.primary }
+                    ]}
+                    onPress={async () => {
+                      if (isSelectedMealAdded && selectedSavedMealId) {
+                        await removeSavedMeal(selectedSavedMealId)
+                        return
+                      }
+                      await handleWantThis(selectedMeal, { shouldClose: false })
+                    }}
+                  >
+                    <Heart size={22} color="#ffffff" fill={isSelectedMealAdded ? '#ffffff' : 'transparent'} />
+                    <Text style={styles.modalWantText}>{isSelectedMealAdded ? 'Added' : 'Add this to the list'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modalRecipeBtn, { backgroundColor: colors.secondaryBg, borderColor: colors.cardBorder }]}
+                    onPress={() => {
+                      closeMealModal()
+                      router.push({ pathname: '/recipe/[id]', params: { id: selectedMeal.id } })
+                    }}
+                  >
+                    <Text style={[styles.modalRecipeText, { color: colors.text }]}>Recipe</Text>
+                  </TouchableOpacity>
+                </View>
               </>
             )
             })()}
           </View>
-        </TouchableOpacity>
+        </View>
       </Modal>
 
       <MealImageFullscreenViewer
@@ -1085,6 +1382,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderRadius: 10,
     backgroundColor: '#1e293b'
+  },
+  surpriseMeGlow: {
+    borderWidth: 2,
+    borderColor: '#f59e0b',
+    shadowColor: '#f59e0b',
+    shadowOpacity: 0.95,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 10
   },
   filterBtnLabel: {
     fontSize: 13,
@@ -1298,7 +1604,10 @@ const styles = StyleSheet.create({
   modalCard: {
     width: '100%',
     maxWidth: 400,
-    maxHeight: '80%',
+    flexDirection: 'column',
+    flexShrink: 1,
+    zIndex: 1,
+    elevation: 8,
     backgroundColor: '#1e293b',
     borderRadius: 16,
     overflow: 'hidden'
@@ -1382,8 +1691,17 @@ const styles = StyleSheet.create({
   },
   modalEmoji: { fontSize: 48 },
   modalScroll: {
+    flexGrow: 1,
+    flexShrink: 1,
+    minHeight: 0
+  },
+  modalScrollContent: {
     padding: PAD,
-    maxHeight: 240
+    paddingBottom: 12
+  },
+  modalActions: {
+    flexShrink: 0,
+    paddingTop: 4
   },
   modalTitle: {
     fontSize: 20,
@@ -1412,7 +1730,7 @@ const styles = StyleSheet.create({
     gap: 8,
     backgroundColor: '#22c55e',
     marginHorizontal: PAD,
-    marginTop: PAD,
+    marginTop: 8,
     padding: 16,
     borderRadius: 12
   },
@@ -1434,5 +1752,129 @@ const styles = StyleSheet.create({
   modalRecipeText: {
     fontSize: 16,
     fontWeight: '700'
+  },
+  feelingSwipeWrap: {
+    flex: 1,
+    minHeight: 400
+  },
+  feelingSwipeActive: {
+    flex: 1
+  },
+  feelingSwipeHeader: {
+    paddingTop: 8,
+    paddingHorizontal: PAD,
+    paddingBottom: 12,
+    alignItems: 'center'
+  },
+  feelingSwipeTitle: {
+    fontSize: 22,
+    fontWeight: '700'
+  },
+  feelingSwipeCounter: {
+    fontSize: 15,
+    marginTop: 4
+  },
+  feelingSwipeCards: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 12
+  },
+  feelingSwipeHints: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    paddingHorizontal: PAD,
+    paddingVertical: 20
+  },
+  feelingSwipeHintItem: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 4
+  },
+  feelingSwipeHintIconBlue: {
+    backgroundColor: '#7dd3fc40'
+  },
+  feelingSwipeHintIcon: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8
+  },
+  feelingSwipeHintEmoji: {
+    fontSize: 22
+  },
+  feelingSwipeHintLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center'
+  },
+  feelingSwipeFinishEarly: {
+    marginHorizontal: PAD,
+    marginBottom: 20,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    alignItems: 'center'
+  },
+  feelingSwipeFinishEarlyText: {
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center'
+  },
+  feelingSwipeCompleteScroll: {
+    padding: PAD,
+    paddingBottom: 40
+  },
+  feelingSwipeCompleteTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginTop: 8
+  },
+  feelingSwipeCompleteSub: {
+    fontSize: 15,
+    textAlign: 'center',
+    marginTop: 8,
+    marginBottom: 20
+  },
+  feelingSwipeSavedList: {
+    gap: 10,
+    marginBottom: 24
+  },
+  feelingSwipeSavedCard: {
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 2
+  },
+  feelingSwipeSavedTitle: {
+    fontSize: 16,
+    fontWeight: '700'
+  },
+  feelingSwipeSavedDesc: {
+    fontSize: 13,
+    marginTop: 4
+  },
+  feelingSwipePrimaryBtn: {
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    marginBottom: 10
+  },
+  feelingSwipePrimaryBtnText: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#ffffff'
+  },
+  feelingSwipeSecondaryBtn: {
+    borderRadius: 12,
+    padding: 14,
+    alignItems: 'center'
+  },
+  feelingSwipeSecondaryBtnText: {
+    fontSize: 16,
+    fontWeight: '600'
   }
 })

@@ -166,16 +166,22 @@ async function downloadAndUploadRecipeImage (recipeId, imageUrlOrPath) {
   }
 }
 
-/** Build instructions text from Spoonacular recipe (instructions string or analyzedInstructions steps). */
+/** Build instructions text from Spoonacular (prefer structured steps when HTML is one blob). */
 function getInstructionsText (recipe) {
-  if (recipe.instructions && String(recipe.instructions).trim()) {
-    return String(recipe.instructions).trim()
-  }
   const steps = recipe.analyzedInstructions?.[0]?.steps
-  if (Array.isArray(steps) && steps.length > 0) {
-    return steps.map((s, i) => `${i + 1}. ${s.step || ''}`).filter(Boolean).join('\n\n')
-  }
-  return null
+  const fromAnalyzed =
+    Array.isArray(steps) && steps.length > 0
+      ? steps.map((s, i) => `${i + 1}. ${String(s.step || '').trim()}`).filter(Boolean).join('\n\n')
+      : null
+  const instr = recipe.instructions && String(recipe.instructions).trim()
+    ? String(recipe.instructions).trim()
+    : null
+  if (!fromAnalyzed) return instr
+  if (!instr) return fromAnalyzed
+  const analyzedBlocks = fromAnalyzed.split(/\n\n/).filter(Boolean).length
+  const liCount = (instr.match(/<li[\s>]/gi) || []).length
+  if (analyzedBlocks >= 2 && liCount < 2) return fromAnalyzed
+  return instr
 }
 
 async function main () {

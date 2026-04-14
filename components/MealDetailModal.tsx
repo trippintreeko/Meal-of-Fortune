@@ -18,7 +18,7 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { X, CalendarPlus, UtensilsCrossed, Share2, Heart, BookOpen, MapPin, Camera, ShoppingCart } from 'lucide-react-native'
 import { supabase } from '@/lib/supabase'
 import { getBestRecipeImageUrlForViewing, mergeRecipeAndStoredImageUrls } from '@/lib/spoonacular-images'
-import { getMealNearMeUrl, getRecipeSearchUrl } from '@/lib/recipes/search'
+import { getMealNearMeUrl } from '@/lib/recipes/search'
 import { MealImageFullscreenViewer } from '@/components/MealImageFullscreenViewer'
 import { useMealPhotosStore } from '@/store/meal-photos-store'
 import { useThemeColors } from '@/hooks/useTheme'
@@ -128,35 +128,53 @@ export function MealDetailCard ({
   useEffect(() => {
     let cancelled = false
     setLoading(true)
+    type GalleryRow = {
+      id: string
+      description: string | null
+      image_urls: string[] | null
+      spoonacular_recipe_id: number | null
+    }
+    const applyGalleryRow = async (row: GalleryRow | null | undefined) => {
+      if (cancelled) return
+      if (!row) {
+        setRecipeId(null)
+        setDescription(null)
+        setImageUrls([])
+        return
+      }
+      setRecipeId(row.id)
+      setDescription(row.description ?? null)
+      const stored = Array.isArray(row.image_urls) ? row.image_urls : []
+      let recipeUrl: string | null = null
+      if (row.spoonacular_recipe_id != null) {
+        const { data: recipeRow } = await supabase
+          .from('spoonacular_recipe_details')
+          .select('image_url')
+          .eq('spoonacular_recipe_id', row.spoonacular_recipe_id)
+          .maybeSingle()
+        if (!cancelled && recipeRow?.image_url) recipeUrl = recipeRow.image_url
+      }
+      setImageUrls(mergeRecipeAndStoredImageUrls(recipeUrl, stored, row.spoonacular_recipe_id))
+    }
     void (async () => {
       try {
         const galleryMealId = (meal.galleryMealId ?? '').trim()
-        const lookupId = galleryMealId || meal.id
-        const { data: byId } = await supabase
-          .from('gallery_meals')
-          .select('id, description, image_urls, spoonacular_recipe_id')
-          .eq('id', lookupId)
-          .maybeSingle()
-        if (cancelled) return
-        const rowById = byId as { id: string; description: string | null; image_urls: string[] | null; spoonacular_recipe_id: number | null } | null
-        if (rowById) {
-          setRecipeId(rowById.id)
-          setDescription(rowById.description ?? null)
-          const stored = Array.isArray(rowById.image_urls) ? rowById.image_urls : []
-          let recipeUrl: string | null = null
-          if (rowById.spoonacular_recipe_id != null) {
-            const { data: recipeRow } = await supabase
-              .from('spoonacular_recipe_details')
-              .select('image_url')
-              .eq('spoonacular_recipe_id', rowById.spoonacular_recipe_id)
-              .maybeSingle()
-            if (!cancelled && recipeRow?.image_url) recipeUrl = recipeRow.image_url
+        // Only gallery_meals.id works here — meal.id is the saved-meal row id, not gallery.
+        if (galleryMealId) {
+          const { data: byId } = await supabase
+            .from('gallery_meals')
+            .select('id, description, image_urls, spoonacular_recipe_id')
+            .eq('id', galleryMealId)
+            .maybeSingle()
+          if (cancelled) return
+          const rowById = byId as GalleryRow | null
+          if (rowById) {
+            await applyGalleryRow(rowById)
+            if (!cancelled) setLoading(false)
+            return
           }
-          setImageUrls(mergeRecipeAndStoredImageUrls(recipeUrl, stored))
-          setLoading(false)
-          return
         }
-        const { data } = await supabase
+        const { data: compositeData } = await supabase
           .from('gallery_meals')
           .select('id, description, image_urls, spoonacular_recipe_id')
           .eq('base_id', meal.baseId)
@@ -165,21 +183,20 @@ export function MealDetailCard ({
           .ilike('title', meal.title.trim())
           .limit(1)
         if (cancelled) return
-        const rows = data as { id: string; description: string | null; image_urls: string[] | null; spoonacular_recipe_id: number | null }[] | null
-        const row = rows?.[0]
-        setRecipeId(row?.id ?? null)
-        setDescription(row?.description ?? null)
-        const stored = Array.isArray(row?.image_urls) ? row.image_urls : []
-        let recipeUrl: string | null = null
-        if (row?.spoonacular_recipe_id != null) {
-          const { data: recipeRow } = await supabase
-            .from('spoonacular_recipe_details')
-            .select('image_url')
-            .eq('spoonacular_recipe_id', row.spoonacular_recipe_id)
-            .maybeSingle()
-          if (!cancelled && recipeRow?.image_url) recipeUrl = recipeRow.image_url
+        const compositeRows = compositeData as GalleryRow[] | null
+        let row = compositeRows?.[0]
+        // Placeholder base/protein/veg from "want this" without real IDs often miss the composite match.
+        if (!row && meal.title?.trim()) {
+          const { data: titleData } = await supabase
+            .from('gallery_meals')
+            .select('id, description, image_urls, spoonacular_recipe_id')
+            .ilike('title', meal.title.trim())
+            .limit(1)
+          if (cancelled) return
+          const titleRows = titleData as GalleryRow[] | null
+          row = titleRows?.[0]
         }
-        setImageUrls(mergeRecipeAndStoredImageUrls(recipeUrl, stored))
+        await applyGalleryRow(row)
       } catch {
         if (!cancelled) {
           setDescription(null)
@@ -286,14 +303,30 @@ export function MealDetailCard ({
       {variant === 'weekPlanner' && onGroceryList ? (
         <View style={[cardStyles.actionsRow, cardStyles.actionsRowWeekPlanner]}>
           <TouchableOpacity
-            style={[cardStyles.rowBtnFlex, { backgroundColor: colors.secondaryBg }]}
-            onPress={() => onRecipe(meal, recipeId)}>
+            style={[
+              cardStyles.rowBtnFlex,
+              { backgroundColor: colors.secondaryBg },
+              (loading || !recipeId) && cardStyles.rowBtnDisabled
+            ]}
+            onPress={() => onRecipe(meal, recipeId)}
+            disabled={loading || !recipeId}
+            accessibilityState={{ disabled: loading || !recipeId }}
+          >
             <BookOpen size={22} color="#f59e0b" />
-            <Text style={[cardStyles.rowBtnText, { color: colors.text }]}>Recipe</Text>
+            <Text style={[cardStyles.rowBtnText, { color: colors.text }]}>
+              {loading ? 'Loading…' : 'Recipe'}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[cardStyles.rowBtnFlex, { backgroundColor: colors.secondaryBg }]}
-            onPress={() => onGroceryList(meal, recipeId)}>
+            style={[
+              cardStyles.rowBtnFlex,
+              { backgroundColor: colors.secondaryBg },
+              (loading || !recipeId) && cardStyles.rowBtnDisabled
+            ]}
+            onPress={() => onGroceryList(meal, recipeId)}
+            disabled={loading || !recipeId}
+            accessibilityState={{ disabled: loading || !recipeId }}
+          >
             <ShoppingCart size={22} color="#22c55e" />
             <Text style={[cardStyles.rowBtnText, { color: colors.text }]}>Grocery list</Text>
           </TouchableOpacity>
@@ -309,12 +342,21 @@ export function MealDetailCard ({
             </TouchableOpacity>
           ) : null}
           <TouchableOpacity
-            style={[cardStyles.rowBtn, { backgroundColor: colors.secondaryBg }]}
+            style={[
+              cardStyles.rowBtn,
+              { backgroundColor: colors.secondaryBg },
+              (loading || !recipeId) && cardStyles.rowBtnDisabled
+            ]}
             onPress={() => onRecipe(meal, recipeId)}
             onLongPress={() => onRecipeLongPress?.(meal, recipeId)}
-            delayLongPress={250}>
+            delayLongPress={250}
+            disabled={loading || !recipeId}
+            accessibilityState={{ disabled: loading || !recipeId }}
+          >
             <BookOpen size={20} color="#f59e0b" />
-            <Text style={[cardStyles.rowBtnText, { color: colors.text }]}>Recipe</Text>
+            <Text style={[cardStyles.rowBtnText, { color: colors.text }]}>
+              {loading ? 'Loading…' : 'Recipe'}
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[cardStyles.rowBtn, { backgroundColor: colors.secondaryBg }]}
@@ -481,6 +523,9 @@ const cardStyles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: '#f1f5f9'
   },
+  rowBtnDisabled: {
+    opacity: 0.45
+  },
   rowBtnAdd: {
     backgroundColor: '#22c55e'
   },
@@ -523,7 +568,10 @@ export default function MealDetailModal ({
       router.push(`/recipe/${recipeId}?savedMealId=${encodeURIComponent(m.id)}`)
       return
     }
-    void Linking.openURL(getRecipeSearchUrl(m.title))
+    Alert.alert(
+      'Recipe unavailable',
+      'We couldn\'t link this meal to an in-app recipe. It may need to be saved from the food gallery with a matching dish.'
+    )
   }
 
   const handleRecipeLongPress = (m: SavedMeal, recipeId: string | null) => {

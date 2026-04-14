@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react'
+import { useEffect, useCallback, useState } from 'react'
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
 } from 'react-native'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ChevronLeft, Sparkles } from 'lucide-react-native'
@@ -15,6 +16,8 @@ import { FEELINGS } from '@/lib/feelings'
 import { useSystemBack } from '@/hooks/useSystemBack'
 
 const DEFAULT_MEAL_TYPE = 'lunch'
+const FEELING_SWIPE_CAP = 25
+const BROWSE_INTENT_STORAGE_KEY = 'feeling_gallery_browse_intent_v1'
 
 export default function FeelingScreen () {
   const router = useRouter()
@@ -23,6 +26,18 @@ export default function FeelingScreen () {
   const setFeeling = useGameSessionStore(s => s.setFeeling)
   const mealType = useGameSessionStore(s => s.mealType)
   const startSession = useGameSessionStore(s => s.startSession)
+  const [browseIntent, setBrowseIntent] = useState<'gallery' | 'swipe'>('gallery')
+
+  useEffect(() => {
+    void AsyncStorage.getItem(BROWSE_INTENT_STORAGE_KEY).then((raw) => {
+      if (raw === 'swipe' || raw === 'gallery') setBrowseIntent(raw)
+    })
+  }, [])
+
+  const setBrowseIntentPersisted = useCallback((next: 'gallery' | 'swipe') => {
+    setBrowseIntent(next)
+    void AsyncStorage.setItem(BROWSE_INTENT_STORAGE_KEY, next)
+  }, [])
 
   const handleBackToHome = useCallback(() => {
     ;(router.replace as (href: string) => void)('/')
@@ -39,12 +54,18 @@ export default function FeelingScreen () {
   const handleSelect = useCallback((feelingId: string) => {
     startSession(DEFAULT_MEAL_TYPE)
     setFeeling(feelingId)
-    router.replace({ pathname: '/food-gallery', params: { feeling: feelingId } })
-  }, [startSession, setFeeling, router])
+    router.push({
+      pathname: '/food-gallery',
+      params: {
+        feeling: feelingId,
+        browse: browseIntent === 'swipe' ? 'swipe' : 'gallery'
+      }
+    })
+  }, [startSession, setFeeling, router, browseIntent])
 
   const handleSkip = useCallback(() => {
     setFeeling(null)
-    router.replace({ pathname: '/food-gallery', params: { feeling: '' } })
+    router.replace({ pathname: '/food-gallery', params: { feeling: '', browse: 'gallery' } })
   }, [setFeeling, router])
 
   if (mealType == null) {
@@ -59,7 +80,7 @@ export default function FeelingScreen () {
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View
         style={[
-          styles.header,
+          styles.headerBanner,
           {
             backgroundColor: colors.card,
             borderBottomColor: colors.border,
@@ -68,14 +89,62 @@ export default function FeelingScreen () {
           }
         ]}
       >
-        <TouchableOpacity style={styles.backButton} onPress={handleBackToHome}>
-          <ChevronLeft size={24} color={colors.text} />
-        </TouchableOpacity>
-        <View style={styles.headerTextWrap}>
-          <Text style={[styles.title, { color: colors.text }]}>Feelings</Text>
-          <Text style={[styles.subtitle, { color: colors.textMuted }]} numberOfLines={1}>
-            Pick a vibe — we&apos;ll use it to steer your picks
-          </Text>
+        <View style={styles.headerTopRow}>
+          <TouchableOpacity style={styles.backButton} onPress={handleBackToHome}>
+            <ChevronLeft size={24} color={colors.text} />
+          </TouchableOpacity>
+          <View style={styles.headerTextWrap}>
+            <Text style={[styles.title, { color: colors.text }]}>Feelings</Text>
+            <Text style={[styles.subtitle, { color: colors.textMuted }]} numberOfLines={2}>
+              Choose how to explore, then pick a vibe
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.browseBannerInner}>
+          <Text style={[styles.browseBannerLabel, { color: colors.textMuted }]}>Explore meals</Text>
+          <View style={[styles.browseTrack, { backgroundColor: colors.background }]}>
+            <TouchableOpacity
+              style={[
+                styles.browseToggleBtn,
+                browseIntent === 'gallery' && { backgroundColor: colors.primary }
+              ]}
+              onPress={() => setBrowseIntentPersisted('gallery')}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityState={{ selected: browseIntent === 'gallery' }}
+            >
+              <Text
+                style={[
+                  styles.browseToggleText,
+                  { color: browseIntent === 'gallery' ? colors.primaryText : colors.textMuted },
+                  browseIntent === 'gallery' && { fontWeight: '700' }
+                ]}
+              >
+                Full gallery
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.browseToggleBtn,
+                browseIntent === 'swipe' && { backgroundColor: colors.primary }
+              ]}
+              onPress={() => setBrowseIntentPersisted('swipe')}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityState={{ selected: browseIntent === 'swipe' }}
+            >
+              <Text
+                style={[
+                  styles.browseToggleText,
+                  { color: browseIntent === 'swipe' ? colors.primaryText : colors.textMuted },
+                  browseIntent === 'swipe' && { fontWeight: '700' }
+                ]}
+              >
+                Swipe {FEELING_SWIPE_CAP}
+              </Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
 
@@ -111,17 +180,36 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8fafc'
   },
-  header: {
+  headerBanner: {
+    borderBottomWidth: 1
+  },
+  headerTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingBottom: 12,
-    backgroundColor: '#ffffff',
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0'
+    paddingBottom: 4
   },
   backButton: {
     marginRight: 12
+  },
+  browseBannerInner: {
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 14
+  },
+  browseBannerLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+    marginLeft: 2
+  },
+  browseTrack: {
+    flexDirection: 'row',
+    borderRadius: 12,
+    padding: 4,
+    gap: 4
   },
   headerTextWrap: {
     flex: 1
@@ -313,6 +401,18 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#64748b'
+  },
+  browseToggleBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  browseToggleText: {
+    fontSize: 14,
+    fontWeight: '600'
   },
   errorText: {
     fontSize: 16,

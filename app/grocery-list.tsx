@@ -263,15 +263,33 @@ export default function GroceryListScreen () {
         .select('id, title, base_id, protein_id, vegetable_id, spoonacular_recipe_id')
 
       const galleryRows = (galleryData ?? []) as GalleryMealRow[]
+      const galleryById = new Map<string, GalleryMealRow>()
       const galleryByKey = new Map<string, GalleryMealRow>()
+      const galleryByTitle = new Map<string, GalleryMealRow[]>()
       for (const row of galleryRows) {
+        galleryById.set(row.id, row)
         const k = `${row.base_id ?? ''}|${row.protein_id ?? ''}|${row.vegetable_id ?? ''}|${(row.title ?? '').trim().toLowerCase()}`
         if (!galleryByKey.has(k)) galleryByKey.set(k, row)
+        const t = (row.title ?? '').trim().toLowerCase()
+        if (t) {
+          if (!galleryByTitle.has(t)) galleryByTitle.set(t, [])
+          galleryByTitle.get(t)!.push(row)
+        }
       }
 
       const meals: MealWithRecipe[] = wanted.map((m) => {
-        const k = `${m.baseId ?? ''}|${m.proteinId ?? ''}|${m.vegetableId ?? ''}|${(m.title ?? '').trim().toLowerCase()}`
-        const row = galleryByKey.get(k) ?? null
+        let row: GalleryMealRow | null = null
+        const gid = (m.galleryMealId ?? '').trim()
+        if (gid) row = galleryById.get(gid) ?? null
+        if (!row) {
+          const k = `${m.baseId ?? ''}|${m.proteinId ?? ''}|${m.vegetableId ?? ''}|${(m.title ?? '').trim().toLowerCase()}`
+          row = galleryByKey.get(k) ?? null
+        }
+        if (!row) {
+          const sameTitle = galleryByTitle.get((m.title ?? '').trim().toLowerCase()) ?? []
+          const withRecipe = sameTitle.filter((r) => r.spoonacular_recipe_id != null)
+          if (withRecipe.length === 1) row = withRecipe[0]
+        }
         return {
           savedMealId: m.id,
           title: m.title,

@@ -81,22 +81,10 @@ export const FEELINGS: FeelingOption[] = [
     color: '#06b6d4'
   },
   {
-    id: 'cozy',
-    label: 'Cozy',
-    description: 'Warm and snug',
-    color: '#dc2626'
-  },
-  {
     id: 'indulgent',
     label: 'Indulgent',
     description: 'Treat yourself, a bit decadent',
     color: '#a21caf'
-  },
-  {
-    id: 'simple',
-    label: 'Simple',
-    description: 'No fuss, straightforward',
-    color: '#64748b'
   },
   {
     id: 'adventurous',
@@ -156,10 +144,10 @@ export const FEELING_GALLERY_MEALS: Record<string, GalleryMeal[]> = {
   ],
   heavy: [
     { id: '10', title: 'Hearty Beef & Rice', color: '#78350f', base: BASE_RICE, protein: PROTEIN_BEEF, vegetable: VEG_BROCCOLI, method: 'grilled' },
-    { id: '11', title: 'Heavy Chicken & Beans', color: '#92400e', base: BASE_BEANS, protein: PROTEIN_CHICKEN, vegetable: VEG_TOMATOES, method: 'baked' }
+    { id: '11', title: 'Heavy Chicken & Beans', color: '#92400e', base: BASE_BEANS, protein: PROTEIN_CHICKEN, vegetable: VEG_TOMATOES, method: 'baked' },
+    { id: '12', title: 'Hearty Chicken Rice Bowl', color: '#b45309', base: BASE_RICE, protein: PROTEIN_CHICKEN, vegetable: VEG_BROCCOLI, method: 'grilled' }
   ],
   hearty: [
-    { id: '12', title: 'Hearty Chicken Rice Bowl', color: '#b45309', base: BASE_RICE, protein: PROTEIN_CHICKEN, vegetable: VEG_BROCCOLI, method: 'grilled' },
     { id: '13', title: 'Beef & Quinoa Bowl', color: '#d97706', base: BASE_QUINOA, protein: PROTEIN_BEEF, vegetable: VEG_GREENS, method: 'grilled' }
   ],
   earthy: [
@@ -186,17 +174,9 @@ export const FEELING_GALLERY_MEALS: Record<string, GalleryMeal[]> = {
     { id: '24', title: 'Refreshing Salmon Bowl', color: '#06b6d4', base: BASE_RICE, protein: PROTEIN_SALMON, vegetable: VEG_AVOCADO, method: 'steamed' },
     { id: '25', title: 'Light Tofu & Greens', color: '#22d3ee', base: BASE_QUINOA, protein: PROTEIN_TOFU, vegetable: VEG_GREENS, method: 'steamed' }
   ],
-  cozy: [
-    { id: '26', title: 'Warm Chicken & Rice', color: '#dc2626', base: BASE_RICE, protein: PROTEIN_CHICKEN, vegetable: VEG_BROCCOLI, method: 'baked' },
-    { id: '27', title: 'Steamy Rice Bowl', color: '#ef4444', base: BASE_RICE, protein: PROTEIN_TOFU, vegetable: VEG_TOMATOES, method: 'steamed' }
-  ],
   indulgent: [
     { id: '28', title: 'Grilled Steak & Rice', color: '#a21caf', base: BASE_RICE, protein: PROTEIN_BEEF, vegetable: VEG_TOMATOES, method: 'grilled' },
     { id: '29', title: 'Baked Salmon Bowl', color: '#c026d3', base: BASE_QUINOA, protein: PROTEIN_SALMON, vegetable: VEG_AVOCADO, method: 'baked' }
-  ],
-  simple: [
-    { id: '30', title: 'Simple Rice & Chicken', color: '#64748b', base: BASE_RICE, protein: PROTEIN_CHICKEN, vegetable: VEG_GREENS, method: 'grilled' },
-    { id: '31', title: 'Easy Eggs & Greens', color: '#94a3b8', base: BASE_RICE, protein: PROTEIN_EGGS, vegetable: VEG_GREENS, method: 'steamed' }
   ],
   adventurous: [
     { id: '32', title: 'Spiced Salmon & Quinoa', color: '#7c3aed', base: BASE_QUINOA, protein: PROTEIN_SALMON, vegetable: VEG_AVOCADO, method: 'grilled' },

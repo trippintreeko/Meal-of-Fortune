@@ -42,25 +42,27 @@ serve(async (req) => {
       )
     }
 
-    const inserts = members.map((m) => ({
-      user_id: m.user_id,
-      type,
-      title,
-      body: bodyText,
-      data: { ...data, group_id: groupId }
-    }))
-
-    const { error: insertError } = await supabase.from('notifications').insert(inserts)
-
-    if (insertError) {
-      return new Response(
-        JSON.stringify({ error: insertError.message }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    let sent = 0
+    const payload = { ...data, group_id: groupId }
+    for (const m of members) {
+      const { data: ok, error: rpcErr } = await supabase.rpc('create_in_app_notification_if_allowed', {
+        p_user_id: m.user_id,
+        p_type: type,
+        p_title: title,
+        p_body: bodyText,
+        p_data: payload
+      })
+      if (rpcErr) {
+        return new Response(
+          JSON.stringify({ error: rpcErr.message, sent }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+      if (ok === true) sent += 1
     }
 
     return new Response(
-      JSON.stringify({ sent: inserts.length }),
+      JSON.stringify({ sent, skipped: members.length - sent }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
   } catch (err) {

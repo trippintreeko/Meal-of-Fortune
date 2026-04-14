@@ -1,12 +1,13 @@
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform } from 'react-native'
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Platform, Alert } from 'react-native'
 import { useRouter } from 'expo-router'
-import { ChevronLeft } from 'lucide-react-native'
+import { BookOpen, ChevronLeft } from 'lucide-react-native'
 import { useThemeColors } from '@/hooks/useTheme'
 import { useCalendarStore } from '@/store/calendar-store'
 import OrbitalSpinWheel from '@/components/OrbitalSpinWheel'
 import type { SavedMeal } from '@/types/calendar'
 import { useSystemBack } from '@/hooks/useSystemBack'
+import { supabase } from '@/lib/supabase'
 
 export default function SpinScreen () {
   const router = useRouter()
@@ -55,6 +56,59 @@ export default function SpinScreen () {
   const handleFrontIndexChange = useCallback((index: number) => {
     setFrontIndex(index)
   }, [])
+
+  const handleOpenRecipe = useCallback(() => {
+    if (spunIndex == null) return
+    const m = mealsToSpin[spunIndex]
+    if (!m) return
+    void (async () => {
+      const tryId = (m.galleryMealId ?? m.id ?? '').trim()
+      let gid = tryId || ''
+
+      // If we have no linked galleryMealId, try to resolve it like the home UI does:
+      // 1) by gallery_meals.id == savedMeal.id
+      // 2) by matching base/protein/vegetable ids + title
+      if (!gid) {
+        gid = ''
+      } else {
+        const { data: byId } = await supabase
+          .from('gallery_meals')
+          .select('id')
+          .eq('id', gid)
+          .maybeSingle()
+        if (!byId) gid = ''
+      }
+
+      if (!gid) {
+        const title = (m.title ?? '').trim()
+        if (title && m.baseId && m.proteinId && m.vegetableId) {
+          const { data: rows, error } = await supabase
+            .from('gallery_meals')
+            .select('id')
+            .eq('base_id', m.baseId)
+            .eq('protein_id', m.proteinId)
+            .eq('vegetable_id', m.vegetableId)
+            .ilike('title', title)
+            .limit(1)
+
+          if (!error && rows?.[0]?.id) gid = rows[0].id
+        }
+      }
+
+      if (gid) {
+        router.push({
+          pathname: '/recipe/[id]',
+          params: { id: gid, savedMealId: m.id }
+        })
+        return
+      }
+
+      Alert.alert(
+        'No recipe',
+        'This meal doesn\'t have a linked gallery recipe. Open Food Gallery to find one with full ingredients and steps.'
+      )
+    })()
+  }, [spunIndex, mealsToSpin, router])
 
   if (mealsToSpin.length === 0) {
     return (
@@ -120,6 +174,21 @@ export default function SpinScreen () {
           </Text>
         </View>
 
+        {spunIndex != null && (
+          <TouchableOpacity
+            style={[
+              styles.recipeButton,
+              { backgroundColor: colors.secondaryBg, borderColor: colors.cardBorder }
+            ]}
+            onPress={handleOpenRecipe}
+            accessibilityRole="button"
+            accessibilityLabel="Open recipe for this meal"
+          >
+            <BookOpen size={20} color={colors.text} />
+            <Text style={[styles.recipeButtonText, { color: colors.text }]}>Recipe</Text>
+          </TouchableOpacity>
+        )}
+
         <TouchableOpacity
           style={[styles.homeButton, { backgroundColor: colors.primary }]}
           onPress={() => (router.replace as (href: string) => void)('/(tabs)/')}>
@@ -152,6 +221,18 @@ const styles = StyleSheet.create({
   },
   resultLabel: { fontSize: 14, fontWeight: '600', marginBottom: 4 },
   resultTitle: { fontSize: 20, fontWeight: '700', textAlign: 'center' },
+  recipeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1
+  },
+  recipeButtonText: { fontSize: 16, fontWeight: '600' },
   emptyState: {
     flex: 1,
     padding: 24,
